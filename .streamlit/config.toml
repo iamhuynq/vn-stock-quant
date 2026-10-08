@@ -1,0 +1,9 @@
+# Local-only UI: never listen on other interfaces, no telemetry.
+[server]
+address = "127.0.0.1"
+port = 8501
+headless = true
+
+[browser]
+gatherUsageStats = false
+serverAddress = "localhost"

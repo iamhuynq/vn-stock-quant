@@ -1,0 +1,185 @@
+"""Daily long-only portfolio simulation with Vietnamese market constraints.
+
+Timeline of session i:
+  open  : enter new positions from the candidate list built at the close of i-1 (signal of i-1);
+          skip a stock whose open is at the ceiling or that has no trade.
+  close : (1) data-error jump on a held stock -> close it at its last valid close;
+          (2) positions at/after their planned exit (and at least 2 sessions after entry, T+2): renew if
+              the stock was a candidate at the close of i-1 (renewal on), otherwise sell at the close,
+              unless the close is at the floor or the stock did not trade (retry next session);
+          (3) mark to market; record equity.
+Sizing: each new position gets equity(prev close) / K, capped by cash and by capacity
+(cap_adv_share x adv_value at the signal date). Costs: fee on both sides, tax on sells.
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from quant_research.backtest.data import Market
+
+
+@dataclass(frozen=True)
+class Strategy:
+    hold_sessions: int = 10
+    max_positions: int = 20
+    renew: bool = True
+    fee: float = 0.0015
+    sell_tax: float = 0.001
+    cap_adv_share: float = 0.05
+    initial_equity: float = 10e9
+
+    def __post_init__(self) -> None:
+        if self.hold_sessions < 2:
+            raise ValueError("hold_sessions must be >= 2 (T+2 settlement)")
+
+
+@dataclass
+class Position:
+    col: int
+    shares: float
+    entry_index: int
+    entry_price: float
+    entry_cost: float
+    planned_exit: int
+    last_price: float
+    renewals: int = 0
+
+
+@dataclass
+class Trade:
+    symbol: str
+    entry_index: int
+    exit_index: int
+    entry_price: float
+    exit_price: float
+    shares: float
+    gross_pnl: float
+    costs: float
+    renewals: int
+    exit_reason: str
+
+
+@dataclass
+class Result:
+    equity: np.ndarray
+    cash: np.ndarray
+    invested: np.ndarray
+    n_positions: np.ndarray
+    trades: list[Trade] = field(default_factory=list)
+    costs_paid: float = 0.0
+    traded_notional: float = 0.0
+    capacity_capped: int = 0
+    entries_blocked: int = 0
+    exits_delayed: int = 0
+    data_error_exits: int = 0
+
+
+# A candidate selector returns, for the close of session i, the ordered column indices to buy at i+1.
+Selector = Callable[[Market, int], list[int]]
+
+
+def signal_selector(market: Market, i: int) -> list[int]:
+    """Stocks in the signal decile at the close of i, strongest signal first (ties by symbol)."""
+    cols = np.flatnonzero(~np.isnan(market.signal[i]))
+    return sorted(cols.tolist(), key=lambda j: (-market.signal[i, j], market.symbols[j]))
+
+
+def random_selector(seed: int, fraction: float = 0.1) -> Selector:
+    """Control: a random `fraction` of the universe each day (same size as one decile), random order.
+    Using the whole universe would make every held stock a 'candidate' and disable exits."""
+    rng = np.random.default_rng(seed)
+
+    def select(market: Market, i: int) -> list[int]:
+        cols = np.flatnonzero(market.universe[i])
+        k = int(round(len(cols) * fraction))
+        return rng.choice(cols, size=k, replace=False).tolist() if k else []
+    return select
+
+
+def run(market: Market, strategy: Strategy, selector: Selector = signal_selector) -> Result:
+    n = len(market.dates)
+    res = Result(np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n, dtype=int))
+    cash = strategy.initial_equity
+    positions: dict[int, Position] = {}
+    candidates: list[int] = []
+    candidate_set: set[int] = set()
+    prev_equity = cash
+
+    for i in range(n):
+        # ---- open: entries from the previous close's candidates
+        for j in candidates:
+            if len(positions) >= strategy.max_positions:
+                break
+            if j in positions:
+                continue
+            price = market.open[i, j]
+            if np.isnan(price) or not market.traded[i, j] or market.open_limit_up[i, j]:
+                res.entries_blocked += 1
+                continue
+            budget = prev_equity / strategy.max_positions
+            adv = market.adv_value[i - 1, j] if i > 0 else np.nan
+            cap = strategy.cap_adv_share * adv if np.isfinite(adv) else np.inf
+            if cap < budget:
+                res.capacity_capped += 1
+            notional = min(budget, cap, cash / (1 + strategy.fee))
+            if notional <= 0:
+                continue
+            cost = notional * strategy.fee
+            cash -= notional + cost
+            res.costs_paid += cost
+            res.traded_notional += notional
+            positions[j] = Position(j, notional / price, i, price, cost, i + strategy.hold_sessions, price)
+
+        # ---- close: data errors, exits/renewals, mark to market
+        for j in list(positions):
+            pos = positions[j]
+            close = market.close[i, j]
+            if market.price_jump[i, j]:
+                _sell(res, positions, j, i, pos.last_price, strategy, market, "data_error")
+                cash += _proceeds(pos, pos.last_price, strategy)
+                res.data_error_exits += 1
+                continue
+            if not np.isnan(close):
+                pos.last_price = close
+            if i < pos.planned_exit or i < pos.entry_index + 2:
+                continue
+            if strategy.renew and j in candidate_set:
+                pos.planned_exit = i + strategy.hold_sessions
+                pos.renewals += 1
+                continue
+            if np.isnan(close) or not market.traded[i, j] or market.limit_down[i, j]:
+                res.exits_delayed += 1
+                continue
+            cash += _proceeds(pos, close, strategy)
+            _sell(res, positions, j, i, close, strategy, market, "planned")
+
+        invested = sum(p.shares * p.last_price for p in positions.values())
+        res.cash[i], res.invested[i], res.n_positions[i] = cash, invested, len(positions)
+        res.equity[i] = prev_equity = cash + invested
+        candidates = selector(market, i)
+        candidate_set = set(candidates)
+
+    for j in list(positions):                      # mark open positions at the end
+        pos = positions[j]
+        res.trades.append(Trade(str(market.symbols[j]), pos.entry_index, n - 1, pos.entry_price, pos.last_price,
+                                pos.shares, pos.shares * (pos.last_price - pos.entry_price), pos.entry_cost,
+                                pos.renewals, "open_at_end"))
+    return res
+
+
+def _proceeds(pos: Position, price: float, strategy: Strategy) -> float:
+    gross = pos.shares * price
+    return gross - gross * (strategy.fee + strategy.sell_tax)
+
+
+def _sell(res: Result, positions: dict[int, Position], j: int, i: int, price: float, strategy: Strategy,
+          market: Market, reason: str) -> None:
+    pos = positions.pop(j)
+    gross = pos.shares * price
+    sell_cost = gross * (strategy.fee + strategy.sell_tax)
+    res.costs_paid += sell_cost
+    res.traded_notional += gross
+    res.trades.append(Trade(str(market.symbols[j]), pos.entry_index, i, pos.entry_price, price, pos.shares,
+                            pos.shares * (price - pos.entry_price), pos.entry_cost + sell_cost, pos.renewals, reason))

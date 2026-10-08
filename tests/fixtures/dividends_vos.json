@@ -1,0 +1,30 @@
+[
+  {
+    "year": 2023,
+    "cashDividend": 0.0,
+    "stockDividend": 0.0,
+    "totalAssets": 2715145833095.0,
+    "stockHolderEquity": 1672142080893.0
+  },
+  {
+    "year": 2024,
+    "cashDividend": 0.0,
+    "stockDividend": 0.0,
+    "totalAssets": 2891191736938.0,
+    "stockHolderEquity": 1988924446304.0
+  },
+  {
+    "year": 2025,
+    "cashDividend": 1100.0,
+    "stockDividend": 0.0,
+    "totalAssets": 3907346317234.0,
+    "stockHolderEquity": 2115743443114.0
+  },
+  {
+    "year": 2026,
+    "cashDividend": 900.0,
+    "stockDividend": 0.0,
+    "totalAssets": 3956451673663.0,
+    "stockHolderEquity": 2004709393469.0
+  }
+]

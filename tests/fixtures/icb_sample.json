@@ -1,0 +1,38 @@
+[
+ {
+  "industryCode": "10",
+  "level": 1,
+  "name": "Công nghệ",
+  "description": "Ngành cấp 1 của ngành cấp 2 sau: Công nghệ thông tin."
+ },
+ {
+  "industryCode": "1010",
+  "level": 2,
+  "name": "Công nghệ thông tin",
+  "description": "Ngành cấp 2 của các ngành cấp 3 sau: Phần mềm và dịch vụ điện toán, Công nghệ phần cứng và thiết bị."
+ },
+ {
+  "industryCode": "101010",
+  "level": 3,
+  "name": "Phần mềm và dịch vụ điện toán",
+  "description": "Ngành cấp 3 của các ngành cấp 4 sau: Dịch vụ điện toán, Công nghệ phần mềm, Dịch vụ số dành cho người tiêu dùng."
+ },
+ {
+  "industryCode": "10101010",
+  "level": 4,
+  "name": "Dịch vụ điện toán",
+  "description": "Các công ty cung cấp dịch vụ tư vấn hoặc tích hợp cho các doanh nghiệp khác liên quan đến công nghệ thông tin. Bao gồm các nhà cung cấp thiết kế hệ thống máy tính, tích hợp hệ thống, hoạt động mạng và hệ thống, tích hợp điện toán đám mây, tư vấn và tích hợp công nghệ sổ cái phân phối (DLT), quản lý dữ liệu và lưu trữ, dịch vụ sửa chữa và hỗ trợ kỹ thuật."
+ },
+ {
+  "industryCode": "10101015",
+  "level": 4,
+  "name": "Công nghệ phần mềm",
+  "description": "Những nhà xuất bản và phân phối phần mềm máy tính dành cho sử dụng gia đình hoặc doanh nghiệp. Loại trừ các nhà sản xuất trò chơi máy tính, được phân loại trong Phân ngành Đồ chơi."
+ },
+ {
+  "industryCode": "10101020",
+  "level": 4,
+  "name": "Dịch vụ số dành cho người tiêu dùng",
+  "description": "Các công ty tham gia vào các nền tảng kỹ thuật số chủ yếu tạo doanh thu từ quảng cáo, phân phối nội dung và các sản phẩm ảo khác dành cho người tiêu dùng. Một phần nhỏ họ tạo ra doanh thu từ phí đăng ký thông qua các dịch vụ liên quan được cung cấp bởi nền tảng và/hoặc thông qua các nhà quảng cáo để sử dụng nội dung dữ liệu và thông tin về khách hàng."
+ }
+]

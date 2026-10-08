@@ -1,0 +1,15 @@
+.env
+.venv/
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+*.building.duckdb
+# Local files copied from FireAnt (responses and the API swagger): kept on this machine only
+a.json
+b.json
+c.jon
+d.json
+v1.json
+index.js
