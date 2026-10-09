@@ -6,14 +6,18 @@ sells first, then buys with the cash available. Rules:
   (NaN, infinite or <= 0) the order is blocked, never uncapped (counted in orders_blocked_no_adv);
 - no buy at an open at the ceiling, no trade in a stock without a trade or an open price;
 - no sell when the session closes at the floor (the open has no floor flag; approximation);
-- T+2 (backtest assumption): shares bought at the open of b arrive in the afternoon of b + 2, and this engine
-  trades at opens only, so they can be sold from the open of b + sell_lag with sell_lag = 3 by default
-  (counted in orders_blocked_t2; sell_lag = 2 is the optimistic sensitivity);
+- T+2 per lot (backtest assumption): shares bought at the open of b arrive in the afternoon of b + 2, and this
+  engine trades at opens only, so a lot can be sold from the open of b + sell_lag (sell_lag = 3 by default;
+  2 is the optimistic sensitivity). A sale uses eligible lots oldest first; a top-up never locks older
+  shares. Orders with no eligible share: orders_blocked_t2; orders reduced to the eligible shares:
+  orders_partial_t2;
 - a held stock with a data-error jump is sold at its last valid close, with the same costs as any sale.
 Costs: commission on both sides, sell tax, plus cost model v1 when given (inputs of the decision close; for a
 data-error exit at the close of i, inputs of the close of i - 1).
-Between rebalances, positions drift with prices. Industry weights are reported twice: of the targets, and
-actual (market value at every close), with the sessions above the cap.
+Between rebalances, positions drift with prices. Positions are marked at the last TRADED close: a session
+without trades keeps the previous mark (its close is only the reference price). stale_value_share_* report the
+share of portfolio value marked with a price older than STALE_SESSIONS. Industry weights are reported twice:
+of the targets, and actual (market value at every close), with the sessions above the cap.
 """
 
 from collections.abc import Callable
@@ -26,6 +30,7 @@ from quant_research.backtest.data import Market
 from quant_research.portfolio.construction import Construction, ranks, select, target_weights
 
 FEE, SELL_TAX = 0.0015, 0.001
+STALE_SESSIONS = 5
 Scores = Callable[[int], np.ndarray]     # rebalance close index -> score per column (NaN = no score)
 
 
@@ -41,6 +46,9 @@ class PortfolioResult:
     orders_blocked: int = 0              # all blocked orders, including the two kinds below
     orders_blocked_no_adv: int = 0
     orders_blocked_t2: int = 0
+    orders_partial_t2: int = 0
+    stale_value_share_max: float = 0.0
+    stale_value_share_mean: float = 0.0     # over sessions with holdings
     data_error_exits: int = 0
     max_target_industry_weight: float = 0.0
     max_actual_industry_weight: float = 0.0
@@ -62,13 +70,17 @@ def rebalance_days(dates: np.ndarray, schedule: str) -> np.ndarray:
 
 def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, initial: float,
                 industry: np.ndarray, cash_on: np.ndarray | None = None, costs: CostModel | None = None,
-                sell_lag: int = 3) -> PortfolioResult:
-    """industry: (dates x symbols) object keys; cash_on: bool per date, True = hold cash after that close."""
+                sell_lag: int = 3, writedown_after: int | None = None) -> PortfolioResult:
+    """industry: (dates x symbols) object keys; cash_on: bool per date, True = hold cash after that close.
+    writedown_after: value a position at 0 while it has not traded for more than this many sessions (valuation
+    sensitivity for stocks that stop trading; the position can still be sold if it trades again)."""
     n, k = market.open.shape
     res = PortfolioResult(np.zeros(n), np.zeros(n), np.zeros(n, dtype=int))
     shares = np.zeros(k)
-    last_buy = np.full(k, -10)
-    last_price = np.full(k, np.nan)
+    lots: dict[int, list[list[float]]] = {}                       # column -> [[buy session, shares], ...]
+    last_price = np.full(k, np.nan)                               # last TRADED close (the mark)
+    last_trade = np.full(k, -1)
+    stale_sum, held_sessions = 0.0, 0
     cash = initial
     is_rebalance = np.zeros(n, bool)
     is_rebalance[rebalance_days(market.dates, schedule)] = True
@@ -77,7 +89,9 @@ def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, 
     for i in range(n):
         traded_today = targets is not None
         if targets is not None:                                   # open of the session after a rebalance close
-            cash = _trade(market, c, res, i, decision, targets, shares, last_buy, last_price, cash, costs, sell_lag)
+            marks = last_price if writedown_after is None else np.where(i - last_trade > writedown_after, 0.0,
+                                                                         last_price)
+            cash = _trade(market, c, res, i, decision, targets, shares, lots, marks, cash, costs, sell_lag)
             targets = None
         for j in np.flatnonzero(shares > 0):                      # close: data errors, then mark to market
             if market.price_jump[i, j]:
@@ -89,9 +103,16 @@ def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, 
                 res.trades.append((i, int(j), -shares[j], last_price[j], cost))
                 res.data_error_exits += 1
                 shares[j] = 0.0
-            elif np.isfinite(market.close[i, j]):
+                lots.pop(int(j), None)
+            elif market.traded[i, j] and np.isfinite(market.close[i, j]):
                 last_price[j] = market.close[i, j]
-        held_value = float(np.nansum(shares * last_price))
+                last_trade[j] = i
+        marks = last_price if writedown_after is None else np.where(i - last_trade > writedown_after, 0.0, last_price)
+        held_value = float(np.nansum(shares * marks))
+        if held_value > 0:
+            stale = float(np.nansum(np.where(i - last_trade > STALE_SESSIONS, shares * last_price, 0.0))) / held_value
+            res.stale_value_share_max = max(res.stale_value_share_max, stale)
+            stale_sum, held_sessions = stale_sum + stale, held_sessions + 1
         res.equity[i], res.cash[i], res.n_names[i] = cash + held_value, cash, int((shares > 0).sum())
         actual = _max_industry(shares * last_price, industry[i], res.equity[i])
         res.max_actual_industry_weight = max(res.max_actual_industry_weight, actual)
@@ -111,6 +132,7 @@ def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, 
                 weights[list(targets)] = list(targets.values())
                 res.max_target_industry_weight = max(res.max_target_industry_weight,
                                                      _max_industry(weights, industry[i], 1.0))
+    res.stale_value_share_mean = stale_sum / held_sessions if held_sessions else 0.0
     return res
 
 
@@ -141,7 +163,7 @@ def _extra(res: PortfolioResult, market: Market, costs: CostModel | None, t: int
 
 
 def _trade(market: Market, c: Construction, res: PortfolioResult, i: int, t: int, targets: dict[int, float],
-           shares: np.ndarray, last_buy: np.ndarray, last_price: np.ndarray, cash: float,
+           shares: np.ndarray, lots: dict[int, list[list[float]]], last_price: np.ndarray, cash: float,
            costs: CostModel | None, sell_lag: int) -> float:
     price = market.open[i]
     equity = cash + float(np.nansum(shares * last_price))           # value at the decision close
@@ -166,17 +188,23 @@ def _trade(market: Market, c: Construction, res: PortfolioResult, i: int, t: int
             if market.limit_down[i, j]:
                 res.orders_blocked += 1
                 continue
-            if i - last_buy[j] < sell_lag:
+            eligible = sum(sh for b, sh in lots.get(j, []) if i - b >= sell_lag)
+            if eligible <= 0:
                 res.orders_blocked += 1
                 res.orders_blocked_t2 += 1
                 continue
             value = min(-delta, cap[j], current)
             res.orders_capped += value < -delta - 1e-9
+            if value > eligible * price[j]:
+                value = eligible * price[j]
+                res.orders_partial_t2 += 1
             cost = value * (FEE + SELL_TAX + _extra(res, market, costs, t, j, value))
             cash += value - cost
+            _consume_lots(lots, j, value / price[j])
             shares[j] -= value / price[j]
             if shares[j] * price[j] < 1e-6:
                 shares[j] = 0.0
+                lots.pop(j, None)
             res.costs_paid += cost
             res.traded_notional += value
             res.trades.append((i, int(j), -value / price[j], price[j], cost))
@@ -194,9 +222,21 @@ def _trade(market: Market, c: Construction, res: PortfolioResult, i: int, t: int
         cost = value * rate
         cash -= value + cost
         shares[j] += value / price[j]
-        last_buy[j] = i
+        lots.setdefault(j, []).append([i, value / price[j]])
         last_price[j] = price[j] if not np.isfinite(last_price[j]) else last_price[j]
         res.costs_paid += cost
         res.traded_notional += value
         res.trades.append((i, int(j), value / price[j], price[j], cost))
     return cash
+
+
+def _consume_lots(lots: dict[int, list[list[float]]], j: int, qty: float) -> None:
+    """Remove `qty` shares from the oldest lots first (only eligible lots are old enough to reach here)."""
+    remaining = qty
+    for lot in lots.get(j, []):
+        take = min(lot[1], remaining)
+        lot[1] -= take
+        remaining -= take
+        if remaining <= 1e-12:
+            break
+    lots[j] = [lot for lot in lots.get(j, []) if lot[1] > 1e-12]

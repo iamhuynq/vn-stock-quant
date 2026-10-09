@@ -2,7 +2,8 @@
 # Daily pipeline: fireant update -> fireant validate -> quant build -> quant daily.
 # Safe to trigger many times a day: it exits early when today's run already succeeded, when another run
 # holds the lock, or when the network/API is down (exit 10: retry at the next trigger).
-# Exit codes: 0 done (or nothing to do), 3 token expired, 7 latest session incomplete, 10 offline, other = failure.
+# Exit codes: 0 done (or nothing to do), 3 token expired, 7 latest session incomplete, 8 validation errors,
+# 10 offline, other = failure.
 set -u
 export TZ=Asia/Ho_Chi_Minh
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,7 +77,11 @@ if [ "$(iso_weekday "$TARGET")" = "5" ] || [ ! -f "$WEEKLY_MARK" ] || [[ ! "$(ca
     log "Weekly report_marks/fundamental update had failures (not blocking; retried at the next run)"
   fi
 fi
-$FIREANT validate >>"$LOG" 2>&1 || log "Validation reported error-level findings (not blocking); see data/reports"
+# Error-level findings (the latest sessions look broken) stop the run before the build; warn/info do not.
+$FIREANT validate >>"$LOG" 2>&1; rc=$?
+if [ "$rc" -ne 0 ]; then
+  notify "Validation found error-level problems in the latest sessions; build stopped. See data/reports and $LOG"; exit 8
+fi
 $QUANT build >>"$LOG" 2>&1 || { rc=$?; notify "quant build failed (exit $rc); see $LOG"; exit "$rc"; }
 $QUANT daily >>"$LOG" 2>&1; rc=$?
 case $rc in

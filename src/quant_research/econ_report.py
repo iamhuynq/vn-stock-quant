@@ -2,6 +2,7 @@
 
 import pandas as pd
 
+from quant_research.backtest.metrics import WRITEDOWN_SESSIONS
 from quant_research.econ import BREAK_EVEN_CAPITAL, COSTS, CONTROL_COSTS
 from quant_research.provenance import from_runs
 from quant_research.results import ResultsStore
@@ -42,6 +43,14 @@ def render(store: ResultsStore, run_id: str) -> str:
                          f"{_pct(v(c, cost, 'strategy', 'excess_cagr_vs_equal_weight'))} | "
                          f"{_pct(v(c, cost, 'strategy', 'excess_cagr_vs_liquidity_weighted'))} | "
                          f"{_pct(v(c, cost, 'strategy', 'excess_cagr_vs_vnindex'))} |")
+    lines += ["", "Order size: order value / ADV20 at the signal close, median and 95th percentile (v1 k = 1):", ""]
+    lines += [f"- {c / 1e9:g} bn VND: median {_num(v(c, 'v1_k1', 'strategy', 'participation_median'), '.2%')}, "
+              f"p95 {_num(v(c, 'v1_k1', 'strategy', 'participation_p95'), '.2%')}" for c in capitals]
+    lines += ["", f"Valuation policy (2026-10-09): stuck positions written down to 0 after {WRITEDOWN_SESSIONS} sessions "
+              f"without a trade, {BREAK_EVEN_CAPITAL / 1e9:g} bn VND: CAGR flat "
+              f"{_pct(v(BREAK_EVEN_CAPITAL, 'flat', f'writedown_{WRITEDOWN_SESSIONS}', 'cagr'))}, v1 "
+              f"{_pct(v(BREAK_EVEN_CAPITAL, 'v1_k1', f'writedown_{WRITEDOWN_SESSIONS}', 'cagr'))}. A pre-registered rule "
+              "is judged on the worse of the two valuations."]
     lines += ["", "## Benchmarks (gross)", "", "| Capital (bn VND) | Equal weight | Liquidity-weighted | VNINDEX |",
               "|---|---|---|---|"]
     for c in capitals:
@@ -70,5 +79,10 @@ def render(store: ResultsStore, run_id: str) -> str:
               f"- on top of `flat` costs: **{_num(be_flat, '.3%')}** (the spread + impact the strategy can absorb);",
               f"- on top of `v1_k1`: **{_num(be_v1, '.3%')}**.", "",
               f"Trades priced with a fallback input (no spread / volatility / ADV estimate): {_num(fallbacks, '.0f')} "
-              "at 1 bn VND."]
+              "at 1 bn VND.", "",
+              "Marking: positions at their last traded close (a no-trade session keeps the previous mark). Invested "
+              "value marked with a price older than 5 sessions at 1 bn VND, v1: mean "
+              f"{_num(v(BREAK_EVEN_CAPITAL, 'v1_k1', 'strategy', 'stale_value_share_mean'), '.1%')}, max "
+              f"{_num(v(BREAK_EVEN_CAPITAL, 'v1_k1', 'strategy', 'stale_value_share_max'), '.1%')}; entries blocked "
+              f"for a missing ADV: {_num(v(BREAK_EVEN_CAPITAL, 'v1_k1', 'strategy', 'entries_blocked_no_adv'), '.0f')}."]
     return "\n".join(lines)

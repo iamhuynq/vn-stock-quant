@@ -18,7 +18,7 @@ from tests.backtest.test_engine import market as _market
 from tests.backtest.test_engine import random_market as _random_market
 
 NOW = datetime(2026, 10, 9, 20, 0, tzinfo=UTC)
-BIG_ADV = 1e12            # the event-engine helpers use an infinite ADV, which this engine treats as invalid
+BIG_ADV = 1e12            # finite and large: an invalid ADV blocks orders
 
 
 def market(*args, **kwargs):
@@ -168,22 +168,44 @@ def test_evaluate_grid_rules(tmp_path_factory):
         with pytest.raises(PortfolioRefused, match="invalidate"):
             evaluate(store, "T1", NOW.replace(hour=21), "research", configs, rule, capitals=(1e9,), n_control=2)
         logged = store.con.execute("SELECT run_id, label FROM hypothesis_log").fetchall()
+        extra = {r[0] for r in store.con.execute("""SELECT DISTINCT series || '/' || metric FROM portfolio_results
+                                                   WHERE run_id = ?""", [runs["T1"]]).fetchall()}
         text = render(store, runs)
         cash = store.con.execute("""SELECT value FROM portfolio_results WHERE run_id = ? AND metric = 'avg_cash_share'
                                     AND cost_model = 'flat'""", [runs["T2"]]).fetchone()[0]
     assert sorted(logged) == sorted((r, "portfolio_excess_vs_equal_weight") for r in runs.values())
     assert "| T1 |" in text and "Worth a pre-registration" in text
+    assert {"writedown_60/cagr", "writedown_60/break_even_extra_cost_per_side", "strategy/participation_median",
+            "sell_lag_2/cagr"} <= extra
     assert cash > 0                                               # Bear filter holds cash part of the time
 
 
 def test_reading_rule():
-    base = {(1e9, "v1_k1", "strategy", "cagr"): 0.05, (1e9, "gross", "equal_weight", "cagr"): 0.01,
+    wd = "writedown_60"
+    base = {(1e9, "v1_k1", "strategy", "cagr"): 0.05, (1e9, "v1_k1", wd, "cagr"): 0.04,
+            (1e9, "gross", "equal_weight", "cagr"): 0.01,
             (1e9, "v1_k1", "random_construction", "share_beaten"): 0.95,
-            (1e9, "v1_k1", "strategy", "break_even_extra_cost_per_side"): 0.002}
+            (1e9, "v1_k1", "strategy", "break_even_extra_cost_per_side"): 0.003,
+            (1e9, "v1_k1", wd, "break_even_extra_cost_per_side"): 0.002}
     assert verdict(base.get)[0] is True
     for key, bad in (((1e9, "v1_k1", "strategy", "cagr"), 0.0), ((1e9, "v1_k1", "random_construction", "share_beaten"), 0.9),
                      ((1e9, "v1_k1", "strategy", "break_even_extra_cost_per_side"), 0.0019)):
         assert verdict({**base, key: bad}.get)[0] is False
+
+
+def test_reading_rule_uses_the_worse_valuation_and_fails_without_it():
+    wd = "writedown_60"
+    base = {(1e9, "v1_k1", "strategy", "cagr"): 0.05, (1e9, "v1_k1", wd, "cagr"): 0.04,
+            (1e9, "gross", "equal_weight", "cagr"): 0.01,
+            (1e9, "v1_k1", "random_construction", "share_beaten"): 1.0,
+            (1e9, "v1_k1", "strategy", "break_even_extra_cost_per_side"): 0.003,
+            (1e9, "v1_k1", wd, "break_even_extra_cost_per_side"): 0.002}
+    assert verdict(base.get)[0] is True
+    assert verdict({**base, (1e9, "v1_k1", wd, "cagr"): 0.005}.get)[0] is False                # passes only by default
+    assert verdict({**base, (1e9, "v1_k1", wd, "break_even_extra_cost_per_side"): 0.001}.get)[0] is False
+    missing = {k: v for k, v in base.items() if k[2] != wd}
+    ok, notes = verdict(missing.get)
+    assert ok is False and any("write-down valuation missing" in n for n in notes)
 
 
 @pytest.mark.parametrize("target", [0.9, 0.4, 0.0])

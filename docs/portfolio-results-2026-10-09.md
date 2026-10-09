@@ -128,3 +128,25 @@ Reading:
   - the validated avoid signal (P3-C3, forward);
   - risk tools: exposure, regimes, correlations;
   - forward monitoring.
+
+## Update: execution audit (2026-10-09)
+
+After the execution audit (`docs/execution-audit-plan.md`, phase A):
+- per-lot T+2;
+- marks at last traded closes;
+- invalid ADV blocked in both engines.
+
+These runs were re-run and the earlier ones invalidated:
+- portfolio grid: `20261009T153933-portfolio-C1..C6-research`, report `data/reports/research/portfolio-grid-20261009T153933.md`.
+
+No verdict changes; the numbers move by at most 0.8 point of CAGR. A new limitation was found: positions in
+stocks that stop trading cannot be sold and keep their last price, which flatters results. See "New
+finding: stuck positions" in the audit plan.
+
+## Update: PR #2 review (2026-10-09)
+
+The reading rule is now judged on the worse of the default marks and the 60-session write-down of stuck
+positions.
+- Current runs: `20261009T171446-portfolio-C1..C6-research`.
+- Report: `data/reports/research/portfolio-grid-20261009T171446.md`.
+- No verdict changes.

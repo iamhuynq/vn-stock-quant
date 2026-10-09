@@ -19,7 +19,7 @@ from quant_research.backtest import runner
 from quant_research.backtest.benchmarks import key_matrices, liquidity_weighted_curve
 from quant_research.backtest.costs import CostModel
 from quant_research.backtest.data import Market, UniverseRule
-from quant_research.backtest.metrics import curve_metrics, equal_weight_curve
+from quant_research.backtest.metrics import WRITEDOWN_SESSIONS, curve_metrics, equal_weight_curve, participation
 from quant_research.econ import FLAT_AS_MODEL
 from quant_research.portfolio.construction import Construction
 from quant_research.portfolio.engine import PortfolioResult, rebalance_days, run_targets
@@ -124,9 +124,9 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
                     "capitals": capitals, "n_control": n_control}), now, (name, config_version(cfg)))
 
     def simulate(capital: float, costs: CostModel | None, score_fn=lambda i: scores[i],
-                 sell_lag: int = SELL_LAG) -> PortfolioResult:
+                 sell_lag: int = SELL_LAG, writedown_after: int | None = None) -> PortfolioResult:
         return run_targets(market, cfg.construction, score_fn, cfg.schedule, capital, industry, cash_on, costs,
-                           sell_lag)
+                           sell_lag, writedown_after)
 
     days = rebalance_days(market.dates, cfg.schedule)
     rho = rank_persistence(scores, days)
@@ -141,18 +141,24 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
         for cname, model in COSTS.items():
             res = simulate(capital, model)
             m = _metrics(res, capital)
+            m |= participation(np.array([abs(t[2]) * t[3] for t in res.trades]),
+                               np.array([market.adv_value[t[0] - 1, t[1]] for t in res.trades]))
             m |= {f"excess_cagr_vs_{b}": m["cagr"] - v for b, v in bench_cagr.items()}
             rows += [(capital, cname, "strategy", k, v) for k, v in m.items()]
             if cname == "v1_k1":
                 rows += _control(simulate, capital, model, res, days, rho, market.open.shape[1], n_control)
             if (capital, cname) == DECISION:
                 decision_curve, ew_curve = res.equity, bench["equal_weight"]
+    written = simulate(DECISION[0], COSTS[DECISION[1]], writedown_after=WRITEDOWN_SESSIONS)
+    rows += [(DECISION[0], DECISION[1], f"writedown_{WRITEDOWN_SESSIONS}", "cagr", curve_metrics(written.equity)["cagr"])]
     optimistic = simulate(DECISION[0], COSTS[DECISION[1]], sell_lag=SELL_LAG_OPTIMISTIC)
     rows += [(DECISION[0], DECISION[1], "sell_lag_2", k, v) for k, v in _metrics(optimistic, DECISION[0]).items()]
+    ew_cagr = curve_metrics(equal_weight_curve(market.close, market.universe, DECISION[0]))["cagr"]
     for cname, model in (("flat", FLAT_AS_MODEL), ("v1_k1", COSTS["v1_k1"])):
         rows.append((DECISION[0], cname, "strategy", "break_even_extra_cost_per_side",
-                     _break_even(simulate, DECISION[0], model, curve_metrics(equal_weight_curve(
-                         market.close, market.universe, DECISION[0]))["cagr"])))
+                     _break_even(simulate, DECISION[0], model, ew_cagr)))
+    rows.append((DECISION[0], DECISION[1], f"writedown_{WRITEDOWN_SESSIONS}", "break_even_extra_cost_per_side",
+                 _break_even(simulate, DECISION[0], COSTS[DECISION[1]], ew_cagr, writedown_after=WRITEDOWN_SESSIONS)))
     p = None
     if decision_curve is not None:
         excess = np.diff(np.log(decision_curve)) - np.diff(np.log(ew_curve))
@@ -180,6 +186,8 @@ def _metrics(res: PortfolioResult, initial: float) -> dict[str, float]:
           "industry_cap_breach_after_trades": float(res.industry_cap_breach_after_trades),
           "orders_capped": float(res.orders_capped), "orders_blocked": float(res.orders_blocked),
           "orders_blocked_no_adv": float(res.orders_blocked_no_adv), "orders_blocked_t2": float(res.orders_blocked_t2),
+          "orders_partial_t2": float(res.orders_partial_t2), "stale_value_share_mean": res.stale_value_share_mean,
+          "stale_value_share_max": res.stale_value_share_max,
           "cost_fallbacks": float(res.cost_fallbacks),
           "data_error_exits": float(res.data_error_exits)}
     return m
@@ -225,9 +233,11 @@ def _control(simulate, capital: float, model: CostModel | None, res: PortfolioRe
             (capital, "v1_k1", "random_construction", "median_turnover_per_year", float(np.nanmedian(turnover)))]
 
 
-def _break_even(simulate, capital: float, model: CostModel, target: float, iterations: int = 14) -> float:
+def _break_even(simulate, capital: float, model: CostModel, target: float, iterations: int = 14,
+                writedown_after: int | None = None) -> float:
     def gap(x: float) -> float:
-        return curve_metrics(simulate(capital, replace(model, extra_flat=x)).equity)["cagr"] - target
+        res = simulate(capital, replace(model, extra_flat=x), writedown_after=writedown_after)
+        return curve_metrics(res.equity)["cagr"] - target
     if gap(0.0) <= 0:
         return 0.0
     if gap(BREAK_EVEN_MAX) > 0:

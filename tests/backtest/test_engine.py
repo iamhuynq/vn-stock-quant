@@ -18,7 +18,7 @@ def market(open_, close, signal=None, **flags) -> Market:
     sig = np.full((n, k), np.nan) if signal is None else np.asarray(signal, float).reshape(n, k)
     m = Market(np.arange(n).astype("datetime64[D]"), np.array([f"S{j}" for j in range(k)], dtype=object),
                open_, close, np.ones((n, k), bool), np.zeros((n, k), bool), np.zeros((n, k), bool),
-               np.zeros((n, k), bool), np.full((n, k), np.inf), np.ones((n, k), bool), sig, np.ones(n))
+               np.zeros((n, k), bool), np.full((n, k), 1e15), np.ones((n, k), bool), sig, np.ones(n))
     for name, value in flags.items():
         getattr(m, name)[...] = np.asarray(value).reshape(n, k)
     return m

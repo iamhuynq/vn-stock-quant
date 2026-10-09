@@ -61,17 +61,35 @@ Registry). Summary:
 
 ## Open items
 
-- Branch `research-platform`, pull request #1 into `main`.
-  - Commit `a74ac2f` was reviewed with "request changes". The fixes are a second commit (see "PR #1 review
-    fixes" in `portfolio-construction-plan.md`).
-  - CI on PR #1 failed on Linux: `scripts/daily.sh` used BSD-only `date -j -v` and `stat -f`. They were
-    replaced by Python helpers; a test now rejects BSD-only flags. Reproduced and verified with GNU-like
-    `date`/`stat` shims, not on a real Linux runner. Third commit.
-  - The user pushes and merges.
+- PR #1 (`research-platform`) was merged into `main` on 2026-10-09 (`511bb2b`), and CI is green on
+  `main`.
   `CLAUDE.md` stays local: it is ignored by the user's global gitignore.
 - Whitelist tightened (2026-10-09). Tickers are upper-case letters and digits with at most one upper-case
   hyphen suffix; ICB codes are digits only. `/symbols/all-financial-data` and other lower-case endpoint
   names are rejected. All 2,012 warehouse symbols and every ICB code still pass.
+- Execution and data audit (external review of 2026-10-09; plan `execution-audit-plan.md`, branch
+  `execution-audit`, not pushed).
+  - **Phase A done:** per-lot T+2, invalid ADV blocked in both engines, marks at last traded closes
+    (the paper portfolio keeps its pre-registered marks and adds a traded-mark line), invariant tests,
+    and error-level validation that stops `daily.sh` (exit 8). The re-runs change no verdict.
+  - **New finding:** positions in stocks that stop trading stay at their last price and flatter results.
+    To be decided in phase B.
+  - **Phase B done:** `quant audit pit`.
+    - Delisted stocks are covered (459). 173 listed stocks have been silent for more than 30 days
+      (suspensions).
+    - Limit flags are band-sensitive on 2% to 8% of liquid rows.
+    - A write-down of stuck positions lowers every CAGR, by 0.5 to 7 points; no verdict changes.
+    - Pending decision: the valuation policy for future evaluations (recommended: report both, and
+      judge on the worse).
+  - **Phase C done:**
+    - valuation policy: report the last price and a 60-session write-down, and judge pre-registered rules
+      on the worse;
+    - order-size statistics: the frozen strategy hits the 5% ADV cap on every order from 10 bn VND;
+    - an end-to-end CLI test on an integration fixture runs in CI;
+    - the industry cap is declared rebalance-time.
+  - Branch `execution-audit`, PR #2. Its review asked for three fixes: NULL validation, the worse
+    valuation in the verdict, and `last_trade` in legacy mode. They are a new commit, and the grid was
+    re-run with no verdict change. The user pushes and merges.
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).
@@ -83,5 +101,5 @@ Registry). Summary:
      (research period) before a pre-registration. The portfolio control is persistence-matched
      (fixed 2026-10-09).
 - Backups `data/results.before-registry.duckdb`, `data/results.before-interactions.duckdb`,
-  `data/results.before-econ.duckdb` and `data/results.before-portfolio*.duckdb` (v1 to v3) can be deleted
-  once the user is satisfied.
+  `data/results.before-econ.duckdb`, `data/results.before-portfolio*.duckdb` (v1 to v3) and
+  `data/results.before-execution-audit.duckdb` can be deleted once the user is satisfied.

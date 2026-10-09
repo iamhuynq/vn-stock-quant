@@ -33,6 +33,7 @@ EXIT_MEANINGS = {
     4: "schema out of date or build refused",
     5: "holdout locked",
     7: "latest session incomplete in the source; retry later",
+    8: "validation found error-level problems; build stopped (see the validation report)",
     10: "offline or API down; nothing changed",
 }
 

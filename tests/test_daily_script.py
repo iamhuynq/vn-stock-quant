@@ -61,8 +61,12 @@ def test_incomplete_latest_session_is_retried_later(tmp_path):
     assert not (tmp_path / "data" / ".daily_done").exists()
 
 
-def test_validation_findings_do_not_block(tmp_path):
+def test_validation_errors_stop_before_the_build(tmp_path):
+    """fireant validate exits 1 only for error-level findings (warn/info exit 0): no build, no marker."""
     rc, calls, _ = run(tmp_path, fireant_validate=1)
+    assert rc == 8 and calls[-1].startswith("fireant validate")
+    assert not (tmp_path / "data" / ".daily_done").exists()
+    rc, calls, _ = run(tmp_path)                                   # fixed: the next trigger runs everything
     assert rc == 0 and calls[-1].startswith("quant daily")
 
 

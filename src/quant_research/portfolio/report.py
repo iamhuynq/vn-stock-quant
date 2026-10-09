@@ -1,7 +1,9 @@
 """Report of the construction grid, with the reading rule declared in docs/portfolio-construction-plan.md."""
 
+import numpy as np
 import pandas as pd
 
+from quant_research.backtest.metrics import WRITEDOWN_SESSIONS
 from quant_research.portfolio.evaluate import CAPITALS, COSTS, DECISION
 from quant_research.provenance import from_runs
 from quant_research.results import ResultsStore
@@ -25,14 +27,28 @@ def latest_runs(store: ResultsStore) -> dict[str, str]:
 
 
 def verdict(get, capital: float = DECISION[0]) -> tuple[bool, list[str]]:
-    cagr = get((capital, DECISION[1], "strategy", "cagr"))
+    """The declared reading rule, judged on the WORSE valuation (valuation policy of 2026-10-09): CAGR and
+    break-even are the lower of the default marks and the write-down of stuck positions. Missing numbers fail.
+    The matched-random criterion compares under the default marks, the valuation its control runs use."""
+    wd = f"writedown_{WRITEDOWN_SESSIONS}"
+    cagrs = [get((capital, DECISION[1], s, "cagr")) for s in ("strategy", wd)]
+    bes = [get((capital, DECISION[1], s, "break_even_extra_cost_per_side")) for s in ("strategy", wd)]
     ew = get((capital, "gross", "equal_weight", "cagr"))
     share = get((capital, DECISION[1], "random_construction", "share_beaten"))
-    be = get((capital, DECISION[1], "strategy", "break_even_extra_cost_per_side"))
-    checks = [("beats equal weight", cagr is not None and ew is not None and cagr > ew),
-              (f"beats >= {MIN_SHARE_BEATEN:.0%} of matched random runs", share is not None and share >= MIN_SHARE_BEATEN),
-              (f"break-even >= {MIN_BREAK_EVEN:.1%} per side over v1", be is not None and be >= MIN_BREAK_EVEN)]
-    return all(ok for _, ok in checks), [f"{'pass' if ok else 'fail'}: {name}" for name, ok in checks]
+    cagr = None if any(_missing(x) for x in cagrs) else min(cagrs)
+    be = None if any(_missing(x) for x in bes) else min(bes)
+    checks = [("beats equal weight (worse valuation)", cagr is not None and not _missing(ew) and cagr > ew),
+              (f"beats >= {MIN_SHARE_BEATEN:.0%} of matched random runs", not _missing(share) and share >= MIN_SHARE_BEATEN),
+              (f"break-even >= {MIN_BREAK_EVEN:.1%} per side over v1 (worse valuation)",
+               be is not None and be >= MIN_BREAK_EVEN)]
+    notes = [f"{'pass' if ok else 'fail'}: {name}" for name, ok in checks]
+    if cagr is None or be is None:
+        notes.append(f"write-down valuation missing ({wd}): counted as a fail")
+    return all(ok for _, ok in checks), notes
+
+
+def _missing(v) -> bool:
+    return v is None or (isinstance(v, float) and np.isnan(v))
 
 
 def render(store: ResultsStore, run_ids: dict[str, str]) -> str:
@@ -72,10 +88,17 @@ def render(store: ResultsStore, run_ids: dict[str, str]) -> str:
                     f"{_num(get((*d[:2], 'strategy', 'industry_cap_breach_sessions')), '.0f')} (after trades "
                     f"{_num(get((*d[:2], 'strategy', 'industry_cap_breach_after_trades')), '.0f')}); orders blocked "
                     f"{_num(get((*d[:2], 'strategy', 'orders_blocked')), '.0f')} (T+2 "
-                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked_t2')), '.0f')}, no ADV "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked_t2')), '.0f')}, T+2 partial "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_partial_t2')), '.0f')}, no ADV "
                     f"{_num(get((*d[:2], 'strategy', 'orders_blocked_no_adv')), '.0f')}); data-error exits "
-                    f"{_num(get((*d[:2], 'strategy', 'data_error_exits')), '.0f')}. Sensitivity sell lag 2 (optimistic "
-                    f"T+2): CAGR {_pct(get((*d[:2], 'sell_lag_2', 'cagr')))} vs {_pct(get((*d[:2], 'strategy', 'cagr')))}.",
+                    f"{_num(get((*d[:2], 'strategy', 'data_error_exits')), '.0f')}; value marked with a price older than "
+                    f"5 sessions: mean {_num(get((*d[:2], 'strategy', 'stale_value_share_mean')), '.1%')}, max "
+                    f"{_num(get((*d[:2], 'strategy', 'stale_value_share_max')), '.1%')}. Sensitivity sell lag 2 (optimistic "
+                    f"T+2): CAGR {_pct(get((*d[:2], 'sell_lag_2', 'cagr')))} vs {_pct(get((*d[:2], 'strategy', 'cagr')))}. "
+                    f"Stuck positions written down after {WRITEDOWN_SESSIONS} sessions: CAGR "
+                    f"{_pct(get((*d[:2], f'writedown_{WRITEDOWN_SESSIONS}', 'cagr')))}. Order value / ADV20: median "
+                    f"{_num(get((*d[:2], 'strategy', 'participation_median')), '.2%')}, p95 "
+                    f"{_num(get((*d[:2], 'strategy', 'participation_p95')), '.2%')}.",
                     "",
                     "| Capital (bn VND) | Costs | CAGR | Sharpe | Max DD | Turnover / yr | Costs paid (x initial) | "
                     "Avg names | vs equal weight | vs VNINDEX | Matched random median CAGR |",
