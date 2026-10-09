@@ -104,3 +104,10 @@ def test_weekly_jobs_run_without_a_marker_and_retry_after_a_failure(tmp_path):
     (tmp_path / "calls.log").unlink()
     rc, calls, _ = run(tmp_path, target="2026-10-07", weekly_done=None, fireant_update___jobs=1)
     assert rc == 0 and calls[1] == WEEKLY and not (tmp_path / "data" / ".weekly_done").exists()
+
+
+def test_script_uses_no_bsd_only_date_or_stat_flags():
+    """CI runs on Linux (GNU coreutils): `date -j`, `date -v` and `stat -f` exist only on macOS / BSD."""
+    import re
+    text = SCRIPT.read_text()
+    assert not re.search(r"\bdate\s+-[jv]|\bstat\s+-f\b", text), "BSD-only date/stat flags in daily.sh"

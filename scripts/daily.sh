@@ -35,6 +35,11 @@ print(d.isoformat())
 PY
 }
 
+# Date and file-time helpers in Python: BSD date/stat flags (macOS) differ from GNU coreutils (Linux, CI).
+days_before() { /usr/bin/python3 -c 'import sys, datetime as d; print(d.date.fromisoformat(sys.argv[1]) - d.timedelta(days=int(sys.argv[2])))' "$1" "$2"; }
+iso_weekday() { /usr/bin/python3 -c 'import sys, datetime as d; print(d.date.fromisoformat(sys.argv[1]).isoweekday())' "$1"; }
+mtime() { /usr/bin/python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$1" 2>/dev/null || date +%s; }
+
 TARGET="$(target_day)"
 if [ -f "$MARK" ] && [[ ! "$(cat "$MARK")" < "$TARGET" ]]; then
   echo "Already done for $TARGET."; exit 0
@@ -43,7 +48,7 @@ fi
 # Lock: mkdir is atomic. A lock older than 3 hours or owned by a dead process is stale.
 if ! mkdir "$LOCK" 2>/dev/null; then
   pid="$(cat "$LOCK/pid" 2>/dev/null || echo 0)"
-  age=$(( $(date +%s) - $(stat -f %m "$LOCK" 2>/dev/null || date +%s) ))
+  age=$(( $(date +%s) - $(mtime "$LOCK") ))
   if kill -0 "$pid" 2>/dev/null && [ "$age" -lt 10800 ]; then
     echo "Another run (pid $pid) is in progress."; exit 0
   fi
@@ -63,8 +68,8 @@ case $rc in
 esac
 # Weekly jobs: on a Friday target, or when the last successful weekly update is 7+ days old (missed Fridays).
 WEEKLY_MARK="$DATA/.weekly_done"
-WEEK_AGO="$(date -j -v-7d -f %F "$TARGET" +%F)"
-if [ "$(date -j -f %F "$TARGET" +%u)" = "5" ] || [ ! -f "$WEEKLY_MARK" ] || [[ ! "$(cat "$WEEKLY_MARK")" > "$WEEK_AGO" ]]; then
+WEEK_AGO="$(days_before "$TARGET" 7)"
+if [ "$(iso_weekday "$TARGET")" = "5" ] || [ ! -f "$WEEKLY_MARK" ] || [[ ! "$(cat "$WEEKLY_MARK")" > "$WEEK_AGO" ]]; then
   if $FIREANT update --jobs report_marks,fundamental >>"$LOG" 2>&1; then
     echo "$TARGET" > "$WEEKLY_MARK"
   else

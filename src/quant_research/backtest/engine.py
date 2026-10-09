@@ -9,7 +9,8 @@ Timeline of session i:
               unless the close is at the floor or the stock did not trade (retry next session);
           (3) mark to market; record equity.
 Sizing: each new position gets equity(prev close) / K, capped by cash and by capacity
-(cap_adv_share x adv_value at the signal date). Costs: fee on both sides, tax on sells.
+(cap_adv_share x adv_value at the signal date). Costs: fee on both sides, tax on sells; with a cost model
+(cost model v1), also half-spread + square-root impact per side, from the inputs of the previous close.
 """
 
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from quant_research.backtest.costs import CostModel
 from quant_research.backtest.data import Market
 
 
@@ -74,6 +76,7 @@ class Result:
     entries_blocked: int = 0
     exits_delayed: int = 0
     data_error_exits: int = 0
+    cost_fallbacks: int = 0
 
 
 # A candidate selector returns, for the close of session i, the ordered column indices to buy at i+1.
@@ -98,7 +101,8 @@ def random_selector(seed: int, fraction: float = 0.1) -> Selector:
     return select
 
 
-def run(market: Market, strategy: Strategy, selector: Selector = signal_selector) -> Result:
+def run(market: Market, strategy: Strategy, selector: Selector = signal_selector,
+        costs: CostModel | None = None) -> Result:
     n = len(market.dates)
     res = Result(np.zeros(n), np.zeros(n), np.zeros(n), np.zeros(n, dtype=int))
     cash = strategy.initial_equity
@@ -123,10 +127,13 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
             cap = strategy.cap_adv_share * adv if np.isfinite(adv) else np.inf
             if cap < budget:
                 res.capacity_capped += 1
-            notional = min(budget, cap, cash / (1 + strategy.fee))
+            extra = _extra(res, market, costs, i, j, min(budget, cap))
+            notional = min(budget, cap, cash / (1 + strategy.fee + extra))
             if notional <= 0:
                 continue
-            cost = notional * strategy.fee
+            if costs is not None:
+                extra = _extra(res, market, costs, i, j, notional)
+            cost = notional * (strategy.fee + extra)
             cash -= notional + cost
             res.costs_paid += cost
             res.traded_notional += notional
@@ -137,8 +144,9 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
             pos = positions[j]
             close = market.close[i, j]
             if market.price_jump[i, j]:
-                _sell(res, positions, j, i, pos.last_price, strategy, market, "data_error")
-                cash += _proceeds(pos, pos.last_price, strategy)
+                extra = _extra(res, market, costs, i, j, pos.shares * pos.last_price)
+                _sell(res, positions, j, i, pos.last_price, strategy, market, "data_error", extra)
+                cash += _proceeds(pos, pos.last_price, strategy, extra)
                 res.data_error_exits += 1
                 continue
             if not np.isnan(close):
@@ -152,8 +160,9 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
             if np.isnan(close) or not market.traded[i, j] or market.limit_down[i, j]:
                 res.exits_delayed += 1
                 continue
-            cash += _proceeds(pos, close, strategy)
-            _sell(res, positions, j, i, close, strategy, market, "planned")
+            extra = _extra(res, market, costs, i, j, pos.shares * close)
+            cash += _proceeds(pos, close, strategy, extra)
+            _sell(res, positions, j, i, close, strategy, market, "planned", extra)
 
         invested = sum(p.shares * p.last_price for p in positions.values())
         res.cash[i], res.invested[i], res.n_positions[i] = cash, invested, len(positions)
@@ -169,16 +178,32 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
     return res
 
 
-def _proceeds(pos: Position, price: float, strategy: Strategy) -> float:
+def _extra(res: Result, market: Market, costs: CostModel | None, i: int, j: int, notional: float) -> float:
+    """Cost model v1 cost per side (0 without a model), from the inputs of the previous close."""
+    if costs is None:
+        return 0.0
+    row = max(i - 1, 0)
+    if costs.spread == "none":
+        hs = 0.0
+    else:
+        spreads = market.tick_half_spread if costs.spread == "tick" else market.half_spread
+        hs = spreads[row, j] if spreads is not None else np.nan
+    sigma = market.sigma[row, j] if market.sigma is not None else np.nan
+    value, fallback = costs.side(hs, sigma, market.adv_value[row, j], notional)
+    res.cost_fallbacks += fallback
+    return value
+
+
+def _proceeds(pos: Position, price: float, strategy: Strategy, extra: float = 0.0) -> float:
     gross = pos.shares * price
-    return gross - gross * (strategy.fee + strategy.sell_tax)
+    return gross - gross * (strategy.fee + strategy.sell_tax + extra)
 
 
 def _sell(res: Result, positions: dict[int, Position], j: int, i: int, price: float, strategy: Strategy,
-          market: Market, reason: str) -> None:
+          market: Market, reason: str, extra: float = 0.0) -> None:
     pos = positions.pop(j)
     gross = pos.shares * price
-    sell_cost = gross * (strategy.fee + strategy.sell_tax)
+    sell_cost = gross * (strategy.fee + strategy.sell_tax + extra)
     res.costs_paid += sell_cost
     res.traded_notional += gross
     res.trades.append(Trade(str(market.symbols[j]), pos.entry_index, i, pos.entry_price, price, pos.shares,

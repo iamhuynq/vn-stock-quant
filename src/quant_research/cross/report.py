@@ -6,6 +6,7 @@ from datetime import datetime
 import pandas as pd
 
 from quant_research.cross.describe import _md
+from quant_research.provenance import from_runs
 from quant_research.results import ResultsStore
 
 
@@ -21,6 +22,7 @@ def render_cross_tests(store: ResultsStore, run_ids: list[str], period: str, now
     qmap = {(r.run_id, r.label): r.q_value for r in q.itertuples()}
     m = int(q["m"].max()) if len(q) else 0
     lines = [f"# Cross-stock tests - period {period} - {now.isoformat(timespec='minutes')}", "",
+             *from_runs(store.con, run_ids),
              f"- Runs: {', '.join(f'`{r}`' for r in run_ids)}",
              f"- q = Benjamini-Hochberg over all {m} logged tests of all valid runs (not only these).",
              "- Outcomes are execution returns (enter at the next open) in excess of VNINDEX; costs 0.4% round "

@@ -4,6 +4,8 @@ from datetime import datetime
 
 import duckdb
 
+from quant_research.provenance import from_runs
+
 GRID = [(h, k, renew) for h in (5, 10, 20) for k in (10, 20) for renew in (True, False)]
 
 
@@ -30,6 +32,7 @@ def render_backtest(con: duckdb.DuckDBPyConnection, run_ids: list[str], generate
     period = meta[run_ids[0]][1] if run_ids else "?"
     first = metrics(run_ids[0]) if run_ids else {}
     lines = [f"# Backtest - order-imbalance top decile - {period} period - {generated_at.isoformat(timespec='seconds')}", "",
+             *from_runs(con, run_ids),
              "Long-only, equal weight, next-open entry, close exit, T+2, ceiling/floor rules, 5% of ADV cap,",
              "0.4% round trip (0.15% fee each side + 0.1% tax). Benchmarks are gross (no costs).", "",
              f"Benchmarks over the same window: equal-weight universe CAGR {_pct(first.get(('equal_weight', 'cagr')))}"

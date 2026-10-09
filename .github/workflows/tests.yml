@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Install Python and dependencies (from uv.lock)
+        run: uv sync --locked
+      - name: Run the test suite (synthetic data only; no token, no data/ directory)
+        env:
+          TZ: Asia/Ho_Chi_Minh
+        run: uv run pytest -q

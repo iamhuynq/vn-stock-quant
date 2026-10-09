@@ -1,7 +1,9 @@
-"""D. Research: runs, run detail, hypothesis log with BH q-values, validation decisions, invalidate a run."""
+"""D. Research: runs, run detail, hypothesis log with BH q-values, research registry, invalidate a run."""
 
 import json
 
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from stock_ui import context, research_data, tasks
@@ -10,8 +12,8 @@ st.title("Research")
 reader = context.reader()
 data_dir = context.data_dir()
 
-tab_runs, tab_log, tab_decisions, tab_events = st.tabs(["Runs", "Hypothesis log", "Validation decisions",
-                                                        "Event study"])
+tab_runs, tab_log, tab_registry, tab_ix, tab_events = st.tabs(["Runs", "Hypothesis log", "Registry",
+                                                                 "Interactions", "Event study"])
 
 with tab_runs:
     runs = research_data.runs(reader)
@@ -84,13 +86,59 @@ with tab_log:
         only_sig = st.toggle("Only q < 0.05", value=False)
         st.dataframe(df[df["q_value"] < 0.05] if only_sig else df, hide_index=True, width="stretch", height=480)
 
-with tab_decisions:
-    dec = research_data.decisions(reader)
-    if dec.value is None and not dec.stale and dec.note is None:
-        st.info("No validation decisions recorded yet (written by `quant daily`).")
-    elif context.freshness(dec, "Validation decisions"):
-        st.caption("Recorded outcomes of the pre-registered validation, shown verbatim.")
-        st.dataframe(dec.value, hide_index=True, width="stretch")
+with tab_registry:
+    reg = research_data.registry(reader)
+    if reg.value is None and not reg.stale and reg.note is None:
+        st.info("No registry yet: any `quant` command that opens the results store creates it "
+                "(for example `uv run quant registry list`).")
+    elif context.freshness(reg, "Registry"):
+        status, history, linked = reg.value["status"], reg.value["history"], reg.value["runs"]
+        st.caption("Every hypothesis and its decision, failures included (doc 31: the registry keeps every "
+                   "failure). Decisions are recorded verbatim; history is append-only. Changes: "
+                   "`uv run quant registry move` (CLI only).")
+        counts = status["status"].value_counts()
+        cols = st.columns(len(counts))
+        for col, (name, n) in zip(cols, counts.items()):
+            col.metric(name, int(n))
+        family = st.selectbox("Family", ["all", *sorted(status["family"].unique())], key="registry_family")
+        shown = status if family == "all" else status[status["family"] == family]
+        st.dataframe(shown.drop(columns=["statement", "pattern_version", "prereg_doc"]), hide_index=True,
+                     width="stretch")
+        pick = st.selectbox("Hypothesis", shown["hypothesis_id"].tolist(), key="registry_pick")
+        if pick:
+            row = status[status["hypothesis_id"] == pick].iloc[0]
+            st.markdown(f"**{pick}: {row['title']}** ({row['family']}, now `{row['status']}`)")
+            st.caption(row["statement"])
+            st.dataframe(history[history["hypothesis_id"] == pick].drop(columns=["hypothesis_id"]),
+                         hide_index=True, width="stretch")
+            runs_of = linked[linked["hypothesis_id"] == pick].drop(columns=["hypothesis_id"])
+            if not runs_of.empty:
+                st.caption("Linked runs; min_q = smallest BH q-value of the run's logged tests, recomputed over "
+                           "the whole log (it can differ from the value quoted when the decision was taken).")
+                st.dataframe(runs_of, hide_index=True, width="stretch")
+
+with tab_ix:
+    ixr = research_data.interactions(reader)
+    if ixr.value is None and not ixr.stale and ixr.note is None:
+        st.info("No interaction scan yet: `uv run quant interactions scan` (research period, logged).")
+    elif context.freshness(ixr, "Interactions"):
+        tests, stats = ixr.value["tests"], ixr.value["stats"]
+        st.caption(f"Run {ixr.value['run_id']}. IC difference = mean daily Spearman IC (factor vs 10-session "
+                   "execution excess return) in state A minus state B, research period only. Candidate rule "
+                   "(declared before the run): q < 0.05, |difference| >= 0.02, same sign in 2006-2014 and "
+                   "2015-2023. Not economic value.")
+        st.metric("Candidates", f"{int(tests['candidate'].sum())} of {len(tests)}")
+        grid = tests.pivot(index="factor", columns="dimension", values="diff")
+        qtext = tests.pivot(index="factor", columns="dimension", values="q_value").map(
+            lambda q: "" if pd.isna(q) else f"q {q:.2g}")
+        fig = go.Figure(go.Heatmap(z=grid.values, x=grid.columns, y=grid.index, colorscale="RdBu", zmid=0,
+                                   text=qtext.values, texttemplate="%{text}"))
+        fig.update_layout(height=420, margin={"l": 10, "r": 10, "t": 30, "b": 10},
+                          title="IC difference (A - B) by factor and dimension")
+        st.plotly_chart(fig, width="stretch", key="research_ix")
+        st.dataframe(tests.drop(columns=["run_id"]), hide_index=True, width="stretch")
+        factor = st.selectbox("Factor", sorted(stats["factor"].unique()), key="ix_factor")
+        st.dataframe(stats[stats["factor"] == factor].drop(columns=["factor"]), hide_index=True, width="stretch")
 
 with tab_events:
     es = research_data.event_study(reader)

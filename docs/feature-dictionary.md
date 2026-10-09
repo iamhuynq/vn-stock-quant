@@ -81,6 +81,55 @@ Flags: `is_traded`, `limit_up`, `limit_down` (approximate, see below), `bad_sour
 | `fwd_has_price_jump_20d` | a `price_jump` occurs in t+1..t+20: exclude |
 | `target_complete`, `crosses_period` | 20 future sessions exist; target window spills into the next period |
 
+## stock_factors (Factor Engine, factor set f1)
+
+Built by `quant build` (`quant_research/factors.py`, definitions also in the `factor_definitions` table). One row
+per (date, symbol, factor) for the scoring universe: `is_traded`, `adv_value_20 > 1e9`, `session_index > 20`,
+`NOT price_jump`, `NOT bad_source_date`, and at least 30 scored stocks per date and factor.
+
+| Column | Definition |
+|--------|------------|
+| `value` | raw factor value (trailing data only) |
+| `winsorized` | `value` clipped to the 1st / 99th percentile of the date |
+| `rank_pct` | percentile rank of `value` on the date: 0 = lowest, 1 = highest (ties share the lowest rank) |
+| `z` | z-score of `winsorized` on the date (population standard deviation) |
+| `bucket` | quintile from `rank_pct`, 1 to 5 |
+| `z_industry` | `z` minus the mean `z` of the stock's ICB level-2 industry that date (at least 3 stocks) |
+
+Factors: `liquidity` (ln ADV20, also the size proxy), `momentum_12_1`, `momentum_1m`, `reversal_1w`,
+`volatility`, `beta` (250 sessions), `order_flow` (5-session mean order imbalance), `foreign_flow`,
+`volume_surge`. Structure report: `uv run quant factors describe`.
+
+## market_regimes (Regime Engine)
+
+One row per market session (`quant_research/regimes.py`). Every label uses data up to that session only.
+Continuous dimensions are labelled by the tercile of today's value within the trailing 500 sessions (today
+included; NULL before 250 values). `*_value` and `*_pct` columns hold the underlying value and its
+percentile.
+
+| Dimension | Underlying value | States |
+|-----------|------------------|--------|
+| `direction` | `market_daily.market_regime` | Bear / Sideway / Bull |
+| `volatility` | VNINDEX 20-session volatility | low / normal / high |
+| `liquidity` | total `deal_value`, 20-session mean | low / normal / high |
+| `breadth` | share of liquid stocks above their own 50-session mean | weak / neutral / strong |
+| `foreign` | market foreign net value / turnover, 20 sessions (quote it: SQL keyword) | selling / neutral / buying |
+| `risk` | risk_off: volatility high and breadth weak, or `drawdown` <= -20%; risk_on: volatility not high, breadth strong, direction Bull | risk_off / neutral / risk_on |
+
+Trending series (liquidity, foreign flow) sit in their upper tercile more often than in the lower one.
+
+## stock_trading_costs (cost model v1 inputs)
+
+One row per (symbol, date) (`quant_research/backtest/costs.py`). The backtest engine reads the row of the
+previous close.
+
+| Column | Definition |
+|--------|------------|
+| `tick_half_spread` | half a tick / raw close (HOSE 10 / 50 / 100 VND by price, HNX / UPCOM 100 VND; today's exchange) |
+| `chl_half_spread` | Abdi-Ranaldo (2017) close-high-low estimate over the pairs in the last 21 sessions (k + 1 <= t), half of the spread, negative means floored at 0, NULL under 10 pairs |
+| `half_spread` | max of the two (overstates liquid stocks: CHL is noisy) |
+| `sigma_20`, `adv_value_20` | inputs of the square-root impact `k * sigma_20 * sqrt(order / ADV20)` |
+
 ## Known limitations
 
 - **Exchange history is unknown.** `limit_up/limit_down/entry_blocked` use today's exchange band

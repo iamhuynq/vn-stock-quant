@@ -17,6 +17,8 @@ from fireant_crawler.client.whitelist import is_allowed
         "/events/search",
         "/icb",
         "/icb/8350/symbols",
+        "/symbols/E1VFVN30",
+        "/symbols/VN30/historical-quotes",
     ],
 )
 def test_allows_market_data_paths(path):
@@ -35,6 +37,14 @@ def test_allows_market_data_paths(path):
         "/symbols/VOS%2Fhistorical-quotes",
         "symbols/VOS",
         "https://evil.example/symbols/VOS",
+        "/symbols/all-financial-data",          # lower-case endpoint names are not tickers
+        "/symbols/vos",
+        "/symbols/VOS-",
+        "/symbols/-VOS",
+        "/symbols/A-B-C",
+        "/symbols/ABCDEFGHIJKLMNOPQRSTU",       # 21 characters
+        "/icb/abc/symbols",
+        "/icb/8350-x/symbols",
     ],
 )
 def test_rejects_other_paths(path):
