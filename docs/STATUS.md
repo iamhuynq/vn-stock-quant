@@ -81,7 +81,13 @@ Registry). Summary:
     - A write-down of stuck positions lowers every CAGR, by 0.5 to 7 points; no verdict changes.
     - Pending decision: the valuation policy for future evaluations (recommended: report both, and
       judge on the worse).
-  - Phase C (CI fixture, cost participation stats, docs) is pending.
+  - **Phase C done:**
+    - valuation policy: report the last price and a 60-session write-down, and judge pre-registered rules
+      on the worse;
+    - order-size statistics: the frozen strategy hits the 5% ADV cap on every order from 10 bn VND;
+    - an end-to-end CLI test on an integration fixture runs in CI;
+    - the industry cap is declared rebalance-time.
+  - Commits on branch `execution-audit`, not pushed. The user pushes and opens the pull request.
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

@@ -19,7 +19,7 @@ from quant_research.backtest import runner
 from quant_research.backtest.benchmarks import key_matrices, liquidity_weighted_curve
 from quant_research.backtest.costs import CostModel
 from quant_research.backtest.data import Market, UniverseRule
-from quant_research.backtest.metrics import curve_metrics, equal_weight_curve
+from quant_research.backtest.metrics import WRITEDOWN_SESSIONS, curve_metrics, equal_weight_curve, participation
 from quant_research.econ import FLAT_AS_MODEL
 from quant_research.portfolio.construction import Construction
 from quant_research.portfolio.engine import PortfolioResult, rebalance_days, run_targets
@@ -124,9 +124,9 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
                     "capitals": capitals, "n_control": n_control}), now, (name, config_version(cfg)))
 
     def simulate(capital: float, costs: CostModel | None, score_fn=lambda i: scores[i],
-                 sell_lag: int = SELL_LAG) -> PortfolioResult:
+                 sell_lag: int = SELL_LAG, writedown_after: int | None = None) -> PortfolioResult:
         return run_targets(market, cfg.construction, score_fn, cfg.schedule, capital, industry, cash_on, costs,
-                           sell_lag)
+                           sell_lag, writedown_after)
 
     days = rebalance_days(market.dates, cfg.schedule)
     rho = rank_persistence(scores, days)
@@ -141,12 +141,16 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
         for cname, model in COSTS.items():
             res = simulate(capital, model)
             m = _metrics(res, capital)
+            m |= participation(np.array([abs(t[2]) * t[3] for t in res.trades]),
+                               np.array([market.adv_value[t[0] - 1, t[1]] for t in res.trades]))
             m |= {f"excess_cagr_vs_{b}": m["cagr"] - v for b, v in bench_cagr.items()}
             rows += [(capital, cname, "strategy", k, v) for k, v in m.items()]
             if cname == "v1_k1":
                 rows += _control(simulate, capital, model, res, days, rho, market.open.shape[1], n_control)
             if (capital, cname) == DECISION:
                 decision_curve, ew_curve = res.equity, bench["equal_weight"]
+    written = simulate(DECISION[0], COSTS[DECISION[1]], writedown_after=WRITEDOWN_SESSIONS)
+    rows += [(DECISION[0], DECISION[1], f"writedown_{WRITEDOWN_SESSIONS}", "cagr", curve_metrics(written.equity)["cagr"])]
     optimistic = simulate(DECISION[0], COSTS[DECISION[1]], sell_lag=SELL_LAG_OPTIMISTIC)
     rows += [(DECISION[0], DECISION[1], "sell_lag_2", k, v) for k, v in _metrics(optimistic, DECISION[0]).items()]
     for cname, model in (("flat", FLAT_AS_MODEL), ("v1_k1", COSTS["v1_k1"])):

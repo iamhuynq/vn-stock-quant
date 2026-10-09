@@ -1,7 +1,7 @@
 # Plan: Execution and data audit (review of 2026-10-09)
 
 <!-- type: bug -->
-<!-- status: phases A and B built and run 2026-10-09 (approved 2026-10-09); phase C pending -->
+<!-- status: built 2026-10-09 (approved 2026-10-09): phases A, B and C done -->
 
 Source: the external review `vn-stock-quant-review-toan-dien.md` (2026-10-09). Every finding was checked
 against the code and the real data before this plan. It uses no validation, holdout or forward data.
@@ -262,3 +262,40 @@ Recommended:
 - Keep the last traded price as the reported default.
 - Report the 60-session write-down next to it in `quant econ evaluate` and `quant portfolio evaluate`.
 - Apply the reading rule of any future pre-registration to the **worse** of the two numbers.
+
+## Result, phase C and valuation policy (2026-10-09)
+
+**Valuation policy (approved).**
+- The last traded price stays the reported default.
+- `quant econ evaluate` and `quant portfolio evaluate` also report the CAGR with stuck positions written
+  down to 0 after 60 sessions without a trade (`WRITEDOWN_SESSIONS`).
+- **A future pre-registered rule is judged on the worse of the two valuations.**
+- The current econ and portfolio runs predate these columns. Their write-down numbers are in the phase B
+  audit report, so they were not re-run (nothing else changed).
+
+**Order size.** Both evaluations report order value / ADV20 at the decision close (median and 95th
+percentile). Computed for the current strategies (research period, v1):
+
+| Strategy | Median | 95th percentile |
+|----------|--------|-----------------|
+| Frozen 72c851c7, 1 bn VND | 0.47% | 3.1% |
+| Frozen 72c851c7, 10 and 100 bn VND | 5.0% | 5.0% (every order at the 5% cap: no capacity left) |
+| Portfolio C1 to C6, 1 bn VND | 0.03% to 0.36% | 1.4% to 4.9% |
+
+**CI integration test.** `tests/test_end_to_end.py`:
+- Fixture: the synthetic warehouse plus a rights issue, three sessions missing for one stock, and a
+  26-session gap that leaves a missing ADV. The synthetic base already has a delisted stock, no-trade
+  sessions, a cash dividend, limit sessions and a data-error jump.
+- It runs the real commands as subprocesses, with no token and no network: `fireant validate`,
+  `quant build`, `quant daily`, `quant audit pit`, `quant registry list`.
+- It then breaks the latest session: validation must exit 1.
+- Run time: about 5 s.
+
+**Industry cap policy.** Declared as a rebalance-time cap: targets respect it, and actual weights can
+drift above it between rebalances. Actual weights and breaches are reported (phase A). No drift-triggered
+rebalance.
+
+**Docs.** STATUS (PR #1 merged, audit state), README (`quant audit pit`), and the project instructions
+(valuation rule).
+
+Full suite: 367 passed. `scripts/daily.sh` was also checked with GNU-like `date`/`stat` shims.

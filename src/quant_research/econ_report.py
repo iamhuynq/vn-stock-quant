@@ -2,6 +2,7 @@
 
 import pandas as pd
 
+from quant_research.backtest.metrics import WRITEDOWN_SESSIONS
 from quant_research.econ import BREAK_EVEN_CAPITAL, COSTS, CONTROL_COSTS
 from quant_research.provenance import from_runs
 from quant_research.results import ResultsStore
@@ -42,6 +43,14 @@ def render(store: ResultsStore, run_id: str) -> str:
                          f"{_pct(v(c, cost, 'strategy', 'excess_cagr_vs_equal_weight'))} | "
                          f"{_pct(v(c, cost, 'strategy', 'excess_cagr_vs_liquidity_weighted'))} | "
                          f"{_pct(v(c, cost, 'strategy', 'excess_cagr_vs_vnindex'))} |")
+    lines += ["", "Order size: order value / ADV20 at the signal close, median and 95th percentile (v1 k = 1):", ""]
+    lines += [f"- {c / 1e9:g} bn VND: median {_num(v(c, 'v1_k1', 'strategy', 'participation_median'), '.2%')}, "
+              f"p95 {_num(v(c, 'v1_k1', 'strategy', 'participation_p95'), '.2%')}" for c in capitals]
+    lines += ["", f"Valuation policy (2026-10-09): stuck positions written down to 0 after {WRITEDOWN_SESSIONS} sessions "
+              f"without a trade, {BREAK_EVEN_CAPITAL / 1e9:g} bn VND: CAGR flat "
+              f"{_pct(v(BREAK_EVEN_CAPITAL, 'flat', f'writedown_{WRITEDOWN_SESSIONS}', 'cagr'))}, v1 "
+              f"{_pct(v(BREAK_EVEN_CAPITAL, 'v1_k1', f'writedown_{WRITEDOWN_SESSIONS}', 'cagr'))}. A pre-registered rule "
+              "is judged on the worse of the two valuations."]
     lines += ["", "## Benchmarks (gross)", "", "| Capital (bn VND) | Equal weight | Liquidity-weighted | VNINDEX |",
               "|---|---|---|---|"]
     for c in capitals:

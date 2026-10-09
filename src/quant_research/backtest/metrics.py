@@ -75,3 +75,15 @@ def equal_weight_curve(close: np.ndarray, universe: np.ndarray, initial: float =
         daily = np.where(counts > 0, sums / np.maximum(counts, 1), 0.0)
     daily = np.nan_to_num(daily)
     return initial * np.concatenate([[1.0], np.cumprod(1 + daily)])
+
+
+WRITEDOWN_SESSIONS = 60        # valuation policy (2026-10-09): report this write-down next to the default marks
+
+
+def participation(values: np.ndarray, advs: np.ndarray) -> dict[str, float]:
+    """Order value / ADV20 at the decision close: median and 95th percentile over orders with a valid ADV."""
+    ok = np.isfinite(advs) & (advs > 0) & np.isfinite(values)
+    ratio = values[ok] / advs[ok]
+    if not len(ratio):
+        return {"participation_median": float("nan"), "participation_p95": float("nan")}
+    return {"participation_median": float(np.median(ratio)), "participation_p95": float(np.percentile(ratio, 95))}

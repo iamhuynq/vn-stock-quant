@@ -168,11 +168,14 @@ def test_evaluate_grid_rules(tmp_path_factory):
         with pytest.raises(PortfolioRefused, match="invalidate"):
             evaluate(store, "T1", NOW.replace(hour=21), "research", configs, rule, capitals=(1e9,), n_control=2)
         logged = store.con.execute("SELECT run_id, label FROM hypothesis_log").fetchall()
+        extra = {r[0] for r in store.con.execute("""SELECT DISTINCT series || '/' || metric FROM portfolio_results
+                                                   WHERE run_id = ?""", [runs["T1"]]).fetchall()}
         text = render(store, runs)
         cash = store.con.execute("""SELECT value FROM portfolio_results WHERE run_id = ? AND metric = 'avg_cash_share'
                                     AND cost_model = 'flat'""", [runs["T2"]]).fetchone()[0]
     assert sorted(logged) == sorted((r, "portfolio_excess_vs_equal_weight") for r in runs.values())
     assert "| T1 |" in text and "Worth a pre-registration" in text
+    assert {"writedown_60/cagr", "strategy/participation_median", "sell_lag_2/cagr"} <= extra
     assert cash > 0                                               # Bear filter holds cash part of the time
 
 

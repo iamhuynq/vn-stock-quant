@@ -35,6 +35,7 @@ scripts/ui.sh                # local UI on http://127.0.0.1:8501 (Ctrl+C to stop
 | `uv run quant interactions scan` | Factor IC by market regime (research period only, logged, one run) |
 | `uv run quant econ evaluate` | Economic evaluation: cost model v1, capital levels, benchmarks, matched controls (research period, not logged) |
 | `uv run quant portfolio evaluate` | Portfolio construction grid C1-C6 (research period, one logged test per config) |
+| `uv run quant audit pit` | Point-in-time and survivorship audit (descriptive, read-only) |
 | `uv run quant runs --invalidate RUN --reason TEXT` | Invalidate a run (runs are never deleted) |
 | `uv run quant registry list` / `show ID` / `add` / `move` | Research Registry: every hypothesis, its state and decision (append-only) |
 

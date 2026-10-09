@@ -191,8 +191,18 @@ def test_evaluate_is_research_only_and_not_logged(built, tmp_path):
                           n_control=2, capitals=(1e9,))
         logged = store.con.execute("SELECT count(*) FROM hypothesis_log").fetchone()[0]
         series = {r[0] for r in store.con.execute("SELECT DISTINCT series FROM economic_results").fetchall()}
+        metrics = {r[0] for r in store.con.execute("SELECT DISTINCT metric FROM economic_results").fetchall()}
         text = render(store, run_id)
     assert logged == 0
     assert series >= {"strategy", "equal_weight", "liquidity_weighted", "vnindex", "random", "industry_matched",
-                      "beta_matched"}
+                      "beta_matched", "writedown_60"}
+    assert {"participation_median", "participation_p95"} <= metrics
     assert "## Break-even" in text and "v1_k1" in text
+    assert "Valuation policy" in text and "Order size" in text
+
+
+def test_participation_ignores_orders_without_a_valid_adv():
+    from quant_research.backtest.metrics import participation
+    out = participation(np.array([10.0, 20.0, 30.0, 40.0]), np.array([100.0, np.nan, 0.0, 400.0]))
+    assert out["participation_median"] == pytest.approx(0.1) and out["participation_p95"] == pytest.approx(0.1)
+    assert np.isnan(participation(np.array([1.0]), np.array([np.nan]))["participation_median"])

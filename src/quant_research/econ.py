@@ -14,7 +14,8 @@ from quant_research.backtest.benchmarks import key_matrices, liquidity_weighted_
 from quant_research.backtest.costs import CostModel
 from quant_research.backtest.data import Market, UniverseRule
 from quant_research.backtest.engine import Strategy, random_selector, run, signal_selector
-from quant_research.backtest.metrics import curve_metrics, equal_weight_curve, strategy_metrics
+from quant_research.backtest.metrics import (WRITEDOWN_SESSIONS, curve_metrics, equal_weight_curve, participation,
+                                             strategy_metrics)
 from quant_research.results import ResearchParams, ResultsStore
 
 CAPITALS = (1e9, 10e9, 100e9)
@@ -74,10 +75,19 @@ def evaluate(store: ResultsStore, label: str, strategy: Strategy, period: str, n
             res = run(market, s, signal_selector, model)
             m = strategy_metrics(res, capital)
             m["cost_fallbacks"] = float(res.cost_fallbacks)
+            cols = {sym: j for j, sym in enumerate(market.symbols)}
+            entries = [t for t in res.trades if t.entry_index > 0]
+            m |= participation(np.array([t.shares * t.entry_price for t in entries]),
+                               np.array([market.adv_value[t.entry_index - 1, cols[t.symbol]] for t in entries]))
             m |= {f"excess_cagr_vs_{b}": m["cagr"] - c for b, c in bench_cagr.items()}
             rows += [(run_id, capital, cname, "strategy", k, v) for k, v in m.items()]
             if cname in CONTROL_COSTS:
                 rows += _controls(run_id, market, s, model, keys, res, capital, cname, n_control)
+    for cname in ("flat", "v1_k1"):                 # valuation policy: write-down of stuck positions
+        wd = run(market, replace(strategy, initial_equity=BREAK_EVEN_CAPITAL), signal_selector, COSTS[cname],
+                 writedown_after=WRITEDOWN_SESSIONS)
+        rows.append((run_id, BREAK_EVEN_CAPITAL, cname, f"writedown_{WRITEDOWN_SESSIONS}", "cagr",
+                     curve_metrics(wd.equity)["cagr"]))
     be_strategy = replace(strategy, initial_equity=BREAK_EVEN_CAPITAL)
     for cname, model in (("flat", FLAT_AS_MODEL), ("v1_k1", COSTS["v1_k1"])):
         rows.append((run_id, BREAK_EVEN_CAPITAL, cname, "strategy", "break_even_extra_cost_per_side",

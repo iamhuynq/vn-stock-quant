@@ -2,6 +2,7 @@
 
 import pandas as pd
 
+from quant_research.backtest.metrics import WRITEDOWN_SESSIONS
 from quant_research.portfolio.evaluate import CAPITALS, COSTS, DECISION
 from quant_research.provenance import from_runs
 from quant_research.results import ResultsStore
@@ -78,7 +79,11 @@ def render(store: ResultsStore, run_ids: dict[str, str]) -> str:
                     f"{_num(get((*d[:2], 'strategy', 'data_error_exits')), '.0f')}; value marked with a price older than "
                     f"5 sessions: mean {_num(get((*d[:2], 'strategy', 'stale_value_share_mean')), '.1%')}, max "
                     f"{_num(get((*d[:2], 'strategy', 'stale_value_share_max')), '.1%')}. Sensitivity sell lag 2 (optimistic "
-                    f"T+2): CAGR {_pct(get((*d[:2], 'sell_lag_2', 'cagr')))} vs {_pct(get((*d[:2], 'strategy', 'cagr')))}.",
+                    f"T+2): CAGR {_pct(get((*d[:2], 'sell_lag_2', 'cagr')))} vs {_pct(get((*d[:2], 'strategy', 'cagr')))}. "
+                    f"Stuck positions written down after {WRITEDOWN_SESSIONS} sessions: CAGR "
+                    f"{_pct(get((*d[:2], f'writedown_{WRITEDOWN_SESSIONS}', 'cagr')))}. Order value / ADV20: median "
+                    f"{_num(get((*d[:2], 'strategy', 'participation_median')), '.2%')}, p95 "
+                    f"{_num(get((*d[:2], 'strategy', 'participation_p95')), '.2%')}.",
                     "",
                     "| Capital (bn VND) | Costs | CAGR | Sharpe | Max DD | Turnover / yr | Costs paid (x initial) | "
                     "Avg names | vs equal weight | vs VNINDEX | Matched random median CAGR |",
