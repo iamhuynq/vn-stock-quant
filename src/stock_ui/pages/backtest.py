@@ -4,7 +4,8 @@ import json
 
 import streamlit as st
 
-from stock_ui import context, research_data
+from stock_ui import context, exposure_panel, research_data
+from stock_ui.exposure_data import paper_weights
 from stock_ui.charts import equity_figure, paper_figure
 
 st.title("Backtest and paper trading")
@@ -36,6 +37,10 @@ with tab_paper:
             st.plotly_chart(paper_figure(d), width="stretch")
             st.markdown(f"**Open positions ({len(p['positions'])})**")
             st.dataframe(p["positions"], hide_index=True, width="stretch", column_config={"pnl": PCT})
+            weights = paper_weights(reader).value
+            if weights:
+                st.markdown("**Exposure of the open positions** (weighted by market value)")
+                exposure_panel.render(reader, weights, key="paper")
 
 with tab_bt:
     bt = research_data.backtest_runs(reader)

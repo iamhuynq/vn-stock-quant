@@ -41,6 +41,9 @@ class Market:
     signal: np.ndarray             # float: signal value if in the signal decile on that date, else NaN
     index_close: np.ndarray        # VNINDEX close per date
     regime: np.ndarray | None = None  # market_regime per date (str or None)
+    half_spread: np.ndarray | None = None  # cost model v1 inputs at that close (stock_trading_costs)
+    sigma: np.ndarray | None = None
+    tick_half_spread: np.ndarray | None = None
 
     def date_index(self, d: date) -> int:
         return int(np.searchsorted(self.dates, np.datetime64(d, "D")))
@@ -94,4 +97,26 @@ def load_market(con: duckdb.DuckDBPyConnection, start: date, end: date, rule: Un
         m.adv_value[i, j] = adv if adv is not None else np.nan
         m.universe[i, j] = bool(uni)
         m.signal[i, j] = sig if sig is not None else np.nan
+    _load_costs(con, m, start, end, schema, d_index, s_index)
     return m
+
+
+def _load_costs(con: duckdb.DuckDBPyConnection, m: Market, start: date, end: date, schema: str,
+                d_index: dict, s_index: dict) -> None:
+    has = con.execute("SELECT count(*) FROM duckdb_tables() WHERE database_name = ? AND table_name = ?",
+                      [schema, "stock_trading_costs"]).fetchone()[0]
+    if not has:
+        return
+    m.half_spread = np.full(m.open.shape, np.nan)
+    m.sigma = np.full(m.open.shape, np.nan)
+    m.tick_half_spread = np.full(m.open.shape, np.nan)
+    df = con.execute(f"""SELECT symbol, date, half_spread, sigma_20, tick_half_spread FROM {schema}.stock_trading_costs
+                         WHERE date BETWEEN ? AND ?""", [start, end]).df()
+    if df.empty:
+        return
+    i = np.array([d_index.get(d, -1) for d in df["date"].dt.date], dtype=int)
+    j = np.array([s_index.get(x, -1) for x in df["symbol"]], dtype=int)
+    ok = (i >= 0) & (j >= 0)
+    m.half_spread[i[ok], j[ok]] = df["half_spread"].to_numpy(float, na_value=np.nan)[ok]
+    m.sigma[i[ok], j[ok]] = df["sigma_20"].to_numpy(float, na_value=np.nan)[ok]
+    m.tick_half_spread[i[ok], j[ok]] = df["tick_half_spread"].to_numpy(float, na_value=np.nan)[ok]

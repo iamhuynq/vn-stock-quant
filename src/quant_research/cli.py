@@ -14,6 +14,7 @@ from fireant_crawler.dotenv import read_env_file
 from quant_research.backtest.engine import Strategy
 from quant_research.backtest.report import GRID, grid_label, render_backtest
 from quant_research.backtest.runner import run_backtest
+from quant_research import registry_cli
 from quant_research.cross import cli as cross_cli
 from quant_research.daily import run_daily
 from quant_research.event_study import render_event_study, run_event_study
@@ -224,6 +225,69 @@ def cmd_event_study() -> int:
     return 0
 
 
+def cmd_interactions(period: str) -> int:
+    from quant_research.interaction_report import render, tests_with_q
+    from quant_research.interactions import InteractionRefused, run_scan
+    now = datetime.now(VN_TZ).replace(microsecond=0)
+    with _store() as store:
+        try:
+            run_id = run_scan(store, period, now)
+        except InteractionRefused as exc:
+            print(f"Refused: {exc}", file=sys.stderr)
+            return 2
+        text = render(store, run_id)
+        n = int(tests_with_q(store, run_id)["candidate"].sum())
+    print(f"Interaction scan {run_id}: {n} candidate(s). Report: {_write_report(f'interactions-{run_id}', text)}")
+    return 0
+
+
+def cmd_econ(strategy_name: str, period: str) -> int:
+    from quant_research.daily import FROZEN_STRATEGY
+    from quant_research.econ import EconRefused, evaluate
+    from quant_research.econ_report import render
+    strategies = {"frozen": FROZEN_STRATEGY}          # the paper portfolio's strategy (version 72c851c7)
+    now = datetime.now(VN_TZ).replace(microsecond=0)
+    with _store() as store:
+        try:
+            run_id = evaluate(store, strategy_name, strategies[strategy_name], period, now)
+        except EconRefused as exc:
+            print(f"Refused: {exc}", file=sys.stderr)
+            return 2
+        text = render(store, run_id)
+    print(f"Economic evaluation {run_id} (descriptive, not logged). Report: {_write_report(f'econ-{run_id}', text)}")
+    return 0
+
+
+def cmd_portfolio(config: str, period: str) -> int:
+    from quant_research.portfolio.evaluate import CONFIGS, PortfolioRefused, evaluate
+    from quant_research.portfolio.report import latest_runs, render
+    names = list(CONFIGS) if config == "all" else [config]
+    now = datetime.now(VN_TZ).replace(microsecond=0)
+    with _store() as store:
+        for name in names:
+            try:
+                run_id = evaluate(store, name, now, period)
+            except PortfolioRefused as exc:
+                print(f"Refused ({name}): {exc}", file=sys.stderr)
+                return 2
+            print(f"{name}: {run_id}")
+        text = render(store, {k: v for k, v in latest_runs(store).items() if k in CONFIGS})
+    print(f"Report: {_write_report(f'portfolio-grid-{now:%Y%m%dT%H%M%S}', text)}")
+    return 0
+
+
+def cmd_factors_describe() -> int:
+    from quant_research.factor_report import render
+    _, research = _paths()
+    try:
+        build_id, text = render(research)
+    except RuntimeError as exc:
+        print(f"Refused: {exc}", file=sys.stderr)
+        return 1
+    print(f"Factor structure (descriptive, research period, not logged): {_write_report(f'factors-{build_id}', text)}")
+    return 0
+
+
 def cmd_runs(invalidate: str | None, reason: str | None) -> int:
     with _store() as store:
         if invalidate:
@@ -275,7 +339,22 @@ def main(argv: list[str] | None = None) -> int:
     runs.add_argument("--reason")
     ev = sub.add_parser("events", help="Event catalog (Phase 5)")
     ev.add_argument("events_command", choices=("study",), help="study: descriptive event study, research period")
+    pf = sub.add_parser("portfolio", help="Portfolio construction grid (research period, one logged test per config)")
+    pf.add_argument("portfolio_command", choices=("evaluate",))
+    pf.add_argument("--config", default="all", choices=("all", "C1", "C2", "C3", "C4", "C5", "C6"))
+    pf.add_argument("--period", default="research", choices=("research", "validation", "holdout", "forward"))
+    ec = sub.add_parser("econ", help="Economic evaluation: cost models, capital, benchmarks, matched controls")
+    ec.add_argument("econ_command", choices=("evaluate",))
+    ec.add_argument("--strategy", default="frozen", choices=("frozen",))
+    ec.add_argument("--period", default="research", choices=("research", "validation", "holdout", "forward"))
+    ix = sub.add_parser("interactions", help="Interaction Engine: factor IC by market regime (logged)")
+    ix.add_argument("interactions_command", choices=("scan",))
+    ix.add_argument("--period", default="research", choices=("research", "validation", "holdout", "forward"))
+    fc = sub.add_parser("factors", help="Factor Engine (factor set f1)")
+    fc.add_argument("factors_command", choices=("describe",),
+                    help="describe: factor structure on the research period (descriptive, no returns)")
     cross_cli.add_parser(sub)
+    registry_cli.add_parser(sub)
     args = parser.parse_args(argv)
     try:
         if args.command == "build":
@@ -295,6 +374,16 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_event_study()
         if args.command == "cross":
             return cross_cli.run(args, _paths, _prereg_extra)
+        if args.command == "portfolio":
+            return cmd_portfolio(args.config, args.period)
+        if args.command == "econ":
+            return cmd_econ(args.strategy, args.period)
+        if args.command == "interactions":
+            return cmd_interactions(args.period)
+        if args.command == "factors":
+            return cmd_factors_describe()
+        if args.command == "registry":
+            return registry_cli.run(args, _store)
     except HoldoutLockedError as exc:
         print(f"Refused: {exc}", file=sys.stderr)
         return 5

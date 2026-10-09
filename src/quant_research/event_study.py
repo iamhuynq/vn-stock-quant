@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 
 from quant_research.events import EVENT_TYPES, catalog_version
+from quant_research.provenance import from_runs
 from quant_research.results import ResearchParams, ResultsStore
 from quant_research.stats import date_means, mean_test
 
@@ -110,7 +111,7 @@ def render_event_study(store: ResultsStore, run_id: str, cost: float) -> str:
                                     mean_max_gain_5d, mean_max_loss_5d, lift, lift_t
                              FROM event_study_stats WHERE run_id = ? AND segment = 'all'
                              ORDER BY event_type, horizon""", [run_id]).df()
-    lines = [f"# Event study - run `{run_id}`", "",
+    lines = [f"# Event study - run `{run_id}`", "", *from_runs(store.con, [run_id]),
              "- Research period, liquid universe (same filter as Phase 3). Descriptive: **not** in the hypothesis "
              "log; the lift t-statistics are not corrected for multiple testing.",
              f"- close_* = raw future close-to-close returns (doc 24); exec_excess_* = enter at the next open, "

@@ -5,6 +5,7 @@ from datetime import datetime
 import duckdb
 
 from quant_research.patterns import LIBRARY
+from quant_research.provenance import from_runs
 
 Q_THRESHOLD = 0.05
 
@@ -30,6 +31,7 @@ def verdict(lift: float | None, after_cost: float | None, q: float | None) -> st
 
 def render_pattern_batch(con: duckdb.DuckDBPyConnection, run_ids: list[str], period: str, generated_at: datetime) -> str:
     lines = [f"# Pattern tests - {period} period - {generated_at.isoformat(timespec='seconds')}", "",
+             *from_runs(con, run_ids),
              "Outcome: excess return vs VNINDEX, enter next open, exit close t+h. Statistics use the date as the",
              "unit (events on one date averaged), Newey-West SE (lag h-1), BH q-values over the whole hypothesis log.",
              "Costs: round trip from run params. **Research-period results are not validated.**", "",
@@ -80,6 +82,7 @@ def render_scan(con: duckdb.DuckDBPyConnection, run_id: str, generated_at: datet
     period = con.execute("SELECT period FROM research_runs WHERE run_id = ?", [run_id]).fetchone()[0]
     q = dict(con.execute("SELECT label, q_value FROM hypothesis_q WHERE run_id = ?", [run_id]).fetchall())
     lines = [f"# Feature scan - {period} period - {generated_at.isoformat(timespec='seconds')}", "",
+             *from_runs(con, [run_id]),
              f"Run `{run_id}`. Deciles formed within each date; spread = decile 10 minus decile 1 (excess",
              "return, next-open entry); IC = mean daily Spearman correlation. Newey-West t-stats; q = BH over the log.", ""]
     horizons = [r[0] for r in con.execute(

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from quant_research.daily import AVOID_PATTERN, FORWARD_START, DailyResult
 from quant_research.events import DAILY_PREFIX, EVENT_TYPES
+from quant_research.provenance import line
 from quant_research.patterns import LIBRARY
 from quant_research.results import ResearchParams, ResultsStore
 
@@ -80,7 +81,8 @@ def render_daily(store: ResultsStore, result: DailyResult, now: datetime, day: d
     con = store.con
     d = day or result.latest_date
     catch_up = day is not None and day != result.latest_date
-    lines = [f"# Daily report - data {d} - generated {now.isoformat(timespec='minutes')}", ""]
+    lines = [f"# Daily report - data {d} - generated {now.isoformat(timespec='minutes')}", "",
+             line(store.provenance()), ""]
     if d is None:
         return "\n".join(lines + ["No data."]) + "\n"
     if catch_up:

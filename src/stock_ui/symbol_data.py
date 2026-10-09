@@ -85,3 +85,22 @@ def _catalog_events(con: duckdb.DuckDBPyConnection, symbol: str, start: date) ->
 def catalog_events(reader: Reader, symbol: str, start: date) -> ReadResult:
     """Phase 5 catalog events of one symbol (research.duckdb stock_events)."""
     return reader.read("research", ("catalog_events", symbol, start), lambda con: _catalog_events(con, symbol, start))
+
+
+def _factors(con: duckdb.DuckDBPyConnection, symbol: str) -> dict | None:
+    has = con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'stock_factors'").fetchone()[0]
+    if not has:
+        return None
+    history = con.execute("""SELECT date, factor, rank_pct FROM stock_factors
+                             WHERE symbol = ? AND date >= (SELECT max(date) FROM stock_factors) - INTERVAL 365 DAY
+                             ORDER BY date""", [symbol]).df()
+    latest = con.execute("""SELECT f.factor, f.date, f.value, f.rank_pct, f.z, f.bucket, f.z_industry, d.sign_note
+                            FROM stock_factors f LEFT JOIN factor_definitions d USING (factor)
+                            WHERE f.symbol = ? AND f.date = (SELECT max(date) FROM stock_factors WHERE symbol = ?)
+                            ORDER BY f.factor""", [symbol, symbol]).df()
+    return {"history": history, "latest": latest}
+
+
+def factors(reader: Reader, symbol: str) -> ReadResult:
+    """Factor Engine scores of one symbol: latest scored date and the last year of ranks."""
+    return reader.read("research", ("factors", symbol), lambda con: _factors(con, symbol))

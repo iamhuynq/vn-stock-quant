@@ -56,9 +56,29 @@ def hypothesis_log(reader: Reader) -> ReadResult:
                                       FROM hypothesis_q q ORDER BY q.q_value, q.p_value""")
 
 
-def decisions(reader: Reader) -> ReadResult:
-    return reader.read("results", "decisions", lambda con: _df_or_none(con, "validation_decisions", """
-        SELECT pattern, version, decision, reason, prereg_sha FROM validation_decisions ORDER BY pattern"""))
+def _registry(con: duckdb.DuckDBPyConnection) -> dict | None:
+    if not _has(con, "hypotheses"):
+        return None
+    status = con.execute("""SELECT hypothesis_id, family, status, decision, title, reason, updated_at, result_doc,
+                                   pattern, pattern_version, prereg_doc, statement
+                            FROM hypothesis_status ORDER BY hypothesis_id""").df()
+    history = con.execute("""SELECT hypothesis_id, seq, moved_at, status, decision, reason, run_id, prereg_doc,
+                                    left(prereg_sha, 12) AS prereg_sha, result_doc
+                             FROM hypothesis_transitions ORDER BY hypothesis_id, seq""").df()
+    runs = con.execute("""
+        WITH links AS (
+            SELECT DISTINCT hypothesis_id, run_id FROM hypothesis_transitions WHERE run_id IS NOT NULL
+            UNION
+            SELECT h.hypothesis_id, r.run_id FROM hypotheses h JOIN research_runs r ON r.pattern_name = h.pattern)
+        SELECT l.hypothesis_id, r.run_id, r.period, r.status, r.created_at, min(q.q_value) AS min_q, count(q.label) AS tests
+        FROM links l JOIN research_runs r USING (run_id) LEFT JOIN hypothesis_q q USING (run_id)
+        GROUP BY ALL ORDER BY l.hypothesis_id, r.created_at""").df()
+    return {"status": status, "history": history, "runs": runs}
+
+
+def registry(reader: Reader) -> ReadResult:
+    """Research Registry: current state per hypothesis, append-only history, linked runs with min BH q."""
+    return reader.read("results", "registry", _registry)
 
 
 def _event_study(con: duckdb.DuckDBPyConnection) -> dict | None:
@@ -153,3 +173,25 @@ def _daily(con: duckdb.DuckDBPyConnection) -> dict | None:
 
 def daily(reader: Reader) -> ReadResult:
     return reader.read("results", "daily_page", _daily)
+
+
+def _interactions(con: duckdb.DuckDBPyConnection) -> dict | None:
+    if not _has(con, "interaction_tests"):
+        return None
+    run = con.execute("""SELECT run_id FROM research_runs WHERE kind = 'interaction' AND status = 'ok'
+                         ORDER BY created_at DESC LIMIT 1""").fetchone()
+    if run is None:
+        return None
+    from quant_research.interaction_report import is_candidate
+    tests = con.execute("""
+        SELECT t.*, q.q_value FROM interaction_tests t
+        LEFT JOIN hypothesis_q q ON q.run_id = t.run_id AND q.label = 'ix_' || t.factor || '_' || t.dimension
+        WHERE t.run_id = ? ORDER BY t.factor, t.dimension""", [run[0]]).df()
+    tests["candidate"] = tests.apply(is_candidate, axis=1)
+    stats = con.execute("SELECT * EXCLUDE (run_id) FROM interaction_stats WHERE run_id = ?", [run[0]]).df()
+    return {"run_id": run[0], "tests": tests, "stats": stats}
+
+
+def interactions(reader: Reader) -> ReadResult:
+    """Latest valid interaction scan: tests with BH q-values and the declared candidate rule; per-state ICs."""
+    return reader.read("results", "interactions", _interactions)

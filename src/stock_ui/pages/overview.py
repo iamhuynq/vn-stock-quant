@@ -2,9 +2,10 @@
 
 from datetime import UTC, datetime
 
+import plotly.graph_objects as go
 import streamlit as st
 
-from stock_ui import context, status
+from stock_ui import context, regime_data, status
 from stock_ui.db import VN_TZ
 
 st.title("Overview")
@@ -87,6 +88,23 @@ if context.freshness(rs, "Research DB") and not rs.value.empty:
         st.success("Built from the current warehouse")
 
 # Daily scan -----------------------------------------------------------------------------------
+st.subheader("Market regimes")
+reg = regime_data.regimes(reader)
+if reg.value is None and not reg.stale and reg.note is None:
+    st.info("No regimes yet: run 'Build features' (Regime Engine).")
+elif context.freshness(reg, "Regimes") and len(reg.value["history"]):
+    hist = reg.value["history"]
+    fig = go.Figure(go.Scatter(x=hist["date"], y=hist["mkt_close"], name="VNINDEX", line={"width": 1.5}))
+    for start, end, state in regime_data.risk_spans(hist):
+        if state != "neutral":
+            fig.add_vrect(x0=start, x1=end, fillcolor=regime_data.RISK_COLORS[state], line_width=0)
+    fig.update_layout(height=320, margin={"l": 10, "r": 10, "t": 30, "b": 10}, showlegend=False,
+                      title="VNINDEX, last 3 years: green = risk_on, red = risk_off (descriptive labels)")
+    st.plotly_chart(fig, width="stretch", key="overview_regimes")
+    latest = reg.value["latest"]
+    st.caption(" | ".join(f"{d}: **{latest[d] if isinstance(latest[d], str) else '-'}**"
+                          for d in regime_data.DIMENSIONS))
+
 st.subheader("Daily scan")
 dl = status.daily(reader)
 if dl.value is None and not dl.stale and dl.note is None:

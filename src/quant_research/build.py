@@ -1,4 +1,5 @@
-"""Build research.duckdb from the warehouse: panel -> market -> features -> targets -> views.
+"""Build research.duckdb from the warehouse: panel -> market -> features -> targets -> views, then factors,
+regimes and trading-cost inputs.
 
 The warehouse is ATTACHed READ_ONLY and its file hash is checked before and after the build, so
 Phase 2 can never change Phase 1 data. Every build is a full rebuild (adj_ratio is rewritten
@@ -16,6 +17,9 @@ from pathlib import Path
 import duckdb
 
 from fireant_crawler.store.migrations import plan_schema_changes
+from quant_research.backtest.costs import build_cost_inputs
+from quant_research.factors import FactorParams, build_factors
+from quant_research.regimes import RegimeParams, build_regimes
 
 FEATURE_SET_VERSION = "v2"  # v2: 2026 split into holdout (<= 2026-10-02) and forward
 SQL_PACKAGE = "quant_research"
@@ -48,6 +52,9 @@ def code_hash() -> str:
         digest.update(name.encode())
         digest.update(text.encode())
     digest.update(resources.files(SQL_PACKAGE).joinpath("build.py").read_bytes())
+    digest.update(resources.files(SQL_PACKAGE).joinpath("factors.py").read_bytes())
+    digest.update(resources.files(SQL_PACKAGE).joinpath("regimes.py").read_bytes())
+    digest.update(resources.files(SQL_PACKAGE).joinpath("backtest", "costs.py").read_bytes())
     return digest.hexdigest()[:16]
 
 
@@ -82,7 +89,8 @@ CREATE TABLE IF NOT EXISTS feature_builds (
     panel_rows          BIGINT,
     feature_rows        BIGINT,
     target_rows         BIGINT,
-    seconds             DOUBLE
+    seconds             DOUBLE,
+    warehouse_sha       VARCHAR
 )"""
 
 
@@ -91,7 +99,9 @@ def _remove_db(path: Path) -> None:
         p.unlink(missing_ok=True)
 
 
-def build(warehouse_path: Path, research_path: Path, now: datetime) -> BuildResult:
+def build(warehouse_path: Path, research_path: Path, now: datetime,
+          factor_params: FactorParams = FactorParams(),
+          regime_params: RegimeParams = RegimeParams()) -> BuildResult:
     """Build into a fresh temporary file, then atomically replace research_path.
 
     A fresh file avoids DuckDB file growth from replaced tables, and a failed build leaves the
@@ -114,22 +124,26 @@ def build(warehouse_path: Path, research_path: Path, now: datetime) -> BuildResu
                 "SELECT count(*) FROM duckdb_tables() WHERE database_name = 'previous' AND table_name = 'feature_builds'"
             ).fetchone()[0]
             if has_history:
-                con.execute("INSERT INTO feature_builds SELECT * FROM previous.feature_builds")
+                con.execute("INSERT INTO feature_builds BY NAME SELECT * FROM previous.feature_builds")
             con.execute("DETACH previous")
         con.begin()
         try:
             for _name, sql in sql_files():
                 con.execute(sql)
+            build_factors(con, factor_params)
+            build_regimes(con, regime_params)
+            build_cost_inputs(con)
             rows = {t: con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
-                    for t in ("daily_panel", "market_daily", "stock_features", "stock_targets")}
+                    for t in ("daily_panel", "market_daily", "stock_features", "stock_targets", "stock_factors",
+                              "market_regimes", "stock_trading_costs")}
             data_as_of = con.execute("SELECT max(date)::VARCHAR FROM daily_panel").fetchone()[0]
             fetched = con.execute("SELECT max(fetched_at) FROM wh.quotes_daily").fetchone()[0]
             build_id = now.strftime("%Y%m%dT%H%M%S")
             seconds = round(time.monotonic() - started, 2)
             con.execute(
-                "INSERT OR REPLACE INTO feature_builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO feature_builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [build_id, FEATURE_SET_VERSION, now, data_as_of, fetched, code_hash(),
-                 rows["daily_panel"], rows["stock_features"], rows["stock_targets"], seconds],
+                 rows["daily_panel"], rows["stock_features"], rows["stock_targets"], seconds, before],
             )
             con.commit()
         except BaseException:

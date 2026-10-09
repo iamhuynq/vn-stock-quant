@@ -29,16 +29,8 @@ COMPLETENESS = 0.95
 AVOID_PATTERN = "drop3_volume2_sellers"
 FROZEN_STRATEGY = Strategy(hold_sessions=10, max_positions=20, renew=True, initial_equity=1e9)  # version 72c851c7
 N_RANDOM = 20
-# Recorded outcomes of the pre-registered validation (docs/validation-results-2026-10-04.md). The report shows
-# these decisions verbatim; it never recomputes a pass/fail from statistics (that once mislabelled C1 as passed).
-VALIDATION_DECISIONS = {
-    # pattern: (version, decision, reason)
-    "order_imbalance_d10": ("0a1952fa", "FAIL", "lift +0.47% replicated (q<0.05) but -0.35% after costs"),
-    "order_imbalance_d10_no_limit": ("dc53588e", "FAIL", "lift +0.53% replicated (q<0.05) but -0.29% after costs"),
-    "momentum10_d10": ("5905e5b3", "FAIL", "lift +0.48% borderline (q 0.049), -0.34% after costs"),
-    "drop3_volume2_sellers": ("cb8daa50", "PASS", "avoid signal: lift -5.16% (q<0.001), 50 events"),
-}
-VALIDATION_PREREG_SHA = "6fe6d425"
+# Validation decisions live in the Research Registry (quant_research/registry.py). Reports show them
+# verbatim; they never recompute a pass/fail from statistics (that once mislabelled C1 as passed).
 
 EVENT_COLUMNS = ("market_regime", "exchange_now", "close_raw", "return_1d", "volume_ratio_20", "order_imbalance")
 
@@ -50,9 +42,6 @@ CREATE TABLE IF NOT EXISTS daily_events (
     scan_date DATE NOT NULL, pattern VARCHAR NOT NULL, version VARCHAR NOT NULL, symbol VARCHAR NOT NULL,
     is_forward BOOLEAN NOT NULL, market_regime VARCHAR, exchange_now VARCHAR, close_raw DOUBLE, return_1d DOUBLE,
     volume_ratio_20 DOUBLE, order_imbalance DOUBLE, PRIMARY KEY (scan_date, pattern, symbol));
-CREATE TABLE IF NOT EXISTS validation_decisions (
-    pattern VARCHAR PRIMARY KEY, version VARCHAR NOT NULL, decision VARCHAR NOT NULL, reason VARCHAR,
-    prereg_sha VARCHAR NOT NULL);
 CREATE TABLE IF NOT EXISTS paper_daily (
     run_date DATE NOT NULL, date DATE NOT NULL, equity DOUBLE, random_p05 DOUBLE, random_median DOUBLE,
     random_p95 DOUBLE, equal_weight DOUBLE, vnindex DOUBLE, n_positions INTEGER, PRIMARY KEY (run_date, date));
@@ -166,8 +155,6 @@ def run_daily(store: ResultsStore, now: datetime, rescan: date | None = None,
               library: dict[str, Pattern] = LIBRARY, n_random: int = N_RANDOM,
               rule: UniverseRule = UniverseRule()) -> DailyResult:
     store.con.execute(SCHEMA)
-    store.con.executemany("INSERT OR REPLACE INTO validation_decisions VALUES (?, ?, ?, ?, ?)",
-                          [(p, v, d, r, VALIDATION_PREREG_SHA) for p, (v, d, r) in VALIDATION_DECISIONS.items()])
     final = final_session(now)
     latest = latest_final(store.con, final)
     scanned, incomplete = [], []

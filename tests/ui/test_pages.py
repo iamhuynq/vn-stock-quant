@@ -99,6 +99,21 @@ def test_overview_shows_facts(env):
     assert any("orders-write" in c.value for c in at.caption)
 
 
+def test_overview_and_watch_show_market_regimes(env):
+    at = AppTest.from_file(str(PAGES / "overview.py"), default_timeout=60).run()
+    assert not at.exception
+    assert "Market regimes" in [h.value for h in at.subheader]
+    assert len(at.get("plotly_chart")) == 1                                       # VNINDEX with risk shading
+    assert any("direction:" in c.value and "risk:" in c.value for c in at.caption)
+    w = AppTest.from_file(str(PAGES / "watch.py"), default_timeout=60).run()
+    assert not w.exception and any(c.value.startswith("Regimes today") for c in w.caption)
+
+
+def test_research_page_interactions_tab_without_a_scan(env):
+    at = AppTest.from_file(str(PAGES / "research.py"), default_timeout=60).run()
+    assert not at.exception and any("No interaction scan yet" in i.value for i in at.info)
+
+
 def test_symbol_page_draws_the_chart(env):
     at = AppTest.from_file(str(PAGES / "symbol.py"), default_timeout=60).run()
     at.radio[0].set_value("All").run()
@@ -129,11 +144,26 @@ def test_research_page_run_detail(env):
     assert any("run-a" in str(df.value.to_string()) for df in at.dataframe)
 
 
+def test_research_page_registry_tab(env):
+    at = AppTest.from_file(str(PAGES / "research.py"), default_timeout=60).run()
+    assert not at.exception
+    assert {m.label for m in at.metric} >= {"failed", "rejected", "forward", "monitoring", "candidate"}
+    reg = next(df.value for df in at.dataframe if "hypothesis_id" in df.value.columns)
+    assert len(reg) == 15 and "Validation decisions" not in [t.label for t in at.tabs]
+    pick = next(s for s in at.selectbox if s.label == "Hypothesis")
+    pick.set_value("P3-C3").run()
+    assert not at.exception
+    history = next(df.value for df in at.dataframe if "seq" in df.value.columns)
+    assert list(history["status"]) == ["research", "candidate", "preregistered", "validated", "forward"]
+
+
 def test_backtest_page_shows_the_paper_portfolio(env):
     at = AppTest.from_file(str(PAGES / "backtest.py"), default_timeout=60).run()
     assert not at.exception
     assert {m.label for m in at.metric} >= {"Strategy", "Random median", "Equal weight", "VNINDEX"}
     assert len(at.get("plotly_chart")) == 1
+    assert {m.label for m in at.metric} >= {"Market beta", "Effective bets"}     # exposure of the open positions
+    assert any("left out): DEL" in c.value for c in at.caption)                   # delisted: no returns, reported
 
 
 def test_daily_page_lists_events(env):
@@ -190,6 +220,9 @@ def test_watch_page_watchlist_and_staleness(env, monkeypatch):
         at = AppTest.from_file(str(PAGES / "watch.py"), default_timeout=60).run()
         assert not at.exception, [e.value for e in at.exception]
         assert any("latest final session is 2099-01-01" in w.value for w in at.warning)
+        bets = {m.label: m.value for m in at.metric}["Effective bets"]              # exposure panel, equal weights
+        assert bets.endswith("of 2") and 1.0 <= float(bets.split()[0]) <= 2.0
+        assert any("sessions to 2027-02-26." in c.value for c in at.caption)
         assert "STK" in at.text_area[0].value and "UPC" in at.text_area[0].value
         at.text_area[0].set_value("upc, nope!, STK STK")                  # form: value and submit in one run
         at.button[0].click().run()

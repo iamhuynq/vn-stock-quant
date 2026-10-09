@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 from stock_ui import context, symbol_data
@@ -96,10 +97,28 @@ with c2:
         else:
             st.dataframe(ev.value, hide_index=True, width="stretch", height=420)
 
-t1, t2, t3 = st.tabs(["Corporate actions", "Financial reports", "Catalog events"])
+t1, t2, t3, t4 = st.tabs(["Corporate actions", "Financial reports", "Catalog events", "Factors"])
 t1.dataframe(actions, hide_index=True, width="stretch")
 t2.dataframe(marks, hide_index=True, width="stretch")
 if events is None:
     t3.caption("No event catalog in the research database yet: run `quant build`.")
 else:
     t3.dataframe(events, hide_index=True, width="stretch")
+fac = symbol_data.factors(reader, symbol)
+with t4:
+    if fac.value is None and not fac.stale and fac.note is None:
+        st.caption("No factor scores in the research database yet: run `quant build`.")
+    elif context.freshness(fac, "Factors"):
+        latest, history = fac.value["latest"], fac.value["history"]
+        if latest.empty:
+            st.caption("Not in the scoring universe on any recent date (liquid stocks only, ADV > 1bn VND).")
+        else:
+            st.caption(f"Factor set f1 on {latest['date'].iloc[0]:%Y-%m-%d}: rank_pct 0 = lowest, 1 = highest of the "
+                       "liquid universe that day; bucket = quintile; z_industry = z minus its industry average. "
+                       "Descriptive, not a forecast.")
+            st.dataframe(latest.drop(columns=["date"]), hide_index=True, width="stretch",
+                         column_config={"rank_pct": st.column_config.ProgressColumn(min_value=0, max_value=1)})
+            fig = px.line(history, x="date", y="rank_pct", color="factor")
+            fig.update_layout(height=360, margin={"l": 10, "r": 10, "t": 30, "b": 10},
+                              title="Rank in the liquid universe, last 12 months", yaxis={"range": [0, 1]})
+            st.plotly_chart(fig, width="stretch", key="symbol_factors")
