@@ -70,8 +70,10 @@ def rebalance_days(dates: np.ndarray, schedule: str) -> np.ndarray:
 
 def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, initial: float,
                 industry: np.ndarray, cash_on: np.ndarray | None = None, costs: CostModel | None = None,
-                sell_lag: int = 3) -> PortfolioResult:
-    """industry: (dates x symbols) object keys; cash_on: bool per date, True = hold cash after that close."""
+                sell_lag: int = 3, writedown_after: int | None = None) -> PortfolioResult:
+    """industry: (dates x symbols) object keys; cash_on: bool per date, True = hold cash after that close.
+    writedown_after: value a position at 0 while it has not traded for more than this many sessions (valuation
+    sensitivity for stocks that stop trading; the position can still be sold if it trades again)."""
     n, k = market.open.shape
     res = PortfolioResult(np.zeros(n), np.zeros(n), np.zeros(n, dtype=int))
     shares = np.zeros(k)
@@ -87,7 +89,9 @@ def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, 
     for i in range(n):
         traded_today = targets is not None
         if targets is not None:                                   # open of the session after a rebalance close
-            cash = _trade(market, c, res, i, decision, targets, shares, lots, last_price, cash, costs, sell_lag)
+            marks = last_price if writedown_after is None else np.where(i - last_trade > writedown_after, 0.0,
+                                                                         last_price)
+            cash = _trade(market, c, res, i, decision, targets, shares, lots, marks, cash, costs, sell_lag)
             targets = None
         for j in np.flatnonzero(shares > 0):                      # close: data errors, then mark to market
             if market.price_jump[i, j]:
@@ -103,7 +107,8 @@ def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, 
             elif market.traded[i, j] and np.isfinite(market.close[i, j]):
                 last_price[j] = market.close[i, j]
                 last_trade[j] = i
-        held_value = float(np.nansum(shares * last_price))
+        marks = last_price if writedown_after is None else np.where(i - last_trade > writedown_after, 0.0, last_price)
+        held_value = float(np.nansum(shares * marks))
         if held_value > 0:
             stale = float(np.nansum(np.where(i - last_trade > STALE_SESSIONS, shares * last_price, 0.0))) / held_value
             res.stale_value_share_max = max(res.stale_value_share_max, stale)

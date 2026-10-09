@@ -1,7 +1,7 @@
 # Plan: Execution and data audit (review of 2026-10-09)
 
 <!-- type: bug -->
-<!-- status: phase A built and run 2026-10-09 (approved 2026-10-09); phases B and C pending -->
+<!-- status: phases A and B built and run 2026-10-09 (approved 2026-10-09); phase C pending -->
 
 Source: the external review `vn-stock-quant-review-toan-dien.md` (2026-10-09). Every finding was checked
 against the code and the real data before this plan. It uses no validation, holdout or forward data.
@@ -206,3 +206,59 @@ The stale-marked value comes almost entirely from positions in stocks that **sto
 Two questions belong to phase B (delisting coverage) and need a decision there:
 - whether such stocks really stopped trading (delisted), or moved to a venue the warehouse lacks;
 - which valuation policy to apply (for example a write-down after N sessions without trades).
+
+## Result, phase B (2026-10-09)
+
+- `quant audit pit` (`src/quant_research/audit.py`) is descriptive and read-only; it logs nothing. Report:
+  `data/reports/research/audit-pit-<build>.md`.
+- Both engines gained a `writedown_after` option (default None, so nothing changes): a position is valued
+  at 0 while it has not traded for more than N sessions. It is still sold if the stock trades again.
+- Tests: the audit is read-only and complete; feature SQL reads no report, fundamental or target table;
+  write-down in both engines. Full suite: 365 passed.
+
+### Findings (real data, build `20261009T112210`)
+
+1. **Survivorship.** Delisted stocks are present: 459 symbols are OTC / not listing today, and up to 221
+   of them traded in a single year. The panel is not survivors-only. Whether the source covers *every*
+   delisted company cannot be checked without an outside list.
+2. **Stocks that stopped trading** (no trade in the last 30 days):
+   - 360 delisted, of which 163 were liquid at some time;
+   - 173 still listed but silent, of which 51 were liquid at some time (for example SVH since 2019, ROS
+     since 2022).
+
+   These are the stuck positions of phase A: suspensions and delistings are real market events, not data
+   gaps.
+3. **Attributes known only at today's value.**
+   - Limit flags: 2.2% (HOSE) to 8.4% (HNX) of liquid traded rows move 7% to 15% from the reference price.
+     There, the band (that is, the unknown historical exchange) decides the flag. This is an upper bound
+     on the rows whose limit flag could be wrong.
+   - Industry: today's ICB code for every year.
+4. **Adjustments.** 18,489 cash dividends (3 without an amount), 4,057 stock dividends and 2,411 rights
+   issues; every title was parsed. The validation report also lists 9 `adj_ratio` change points without a
+   matching event.
+5. **Availability.** Feature SQL reads no report, fundamental or target table (now a test).
+6. **Valuation of stuck positions** (CAGR, research period, 1 bn VND):
+
+| Strategy | Costs | Last price (default) | 0 after 60 sessions | 0 after 20 sessions |
+|----------|-------|----------------------|---------------------|---------------------|
+| Frozen 72c851c7 | flat | +14.3% | +13.8% | +13.8% |
+| Frozen 72c851c7 | v1 | -10.9% | -12.7% | -12.7% |
+| C1 | v1 | -23.1% | -30.5% | -30.5% |
+| C2 | v1 | -17.8% | -22.4% | -22.4% |
+| C3 | v1 | -6.3% | -6.7% | -6.9% |
+| C4 | v1 | -12.7% | -13.7% | -13.6% |
+| C5 | v1 | -12.7% | -13.6% | -13.3% |
+| C6 | v1 | -3.5% | -3.4% | -3.6% |
+
+Reading:
+- Keeping stuck positions at their last price flatters the results: by 0.5 point a year for the frozen
+  strategy with flat costs, up to 7 points for C1.
+- 20 and 60 sessions give almost the same numbers, because the stuck positions almost never trade again.
+- No verdict changes; every number gets worse.
+
+### Decision needed: valuation policy for future evaluations
+
+Recommended:
+- Keep the last traded price as the reported default.
+- Report the 60-session write-down next to it in `quant econ evaluate` and `quant portfolio evaluate`.
+- Apply the reading rule of any future pre-registration to the **worse** of the two numbers.

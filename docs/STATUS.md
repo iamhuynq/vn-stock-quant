@@ -74,7 +74,14 @@ Registry). Summary:
     and error-level validation that stops `daily.sh` (exit 8). The re-runs change no verdict.
   - **New finding:** positions in stocks that stop trading stay at their last price and flatter results.
     To be decided in phase B.
-  - Phases B (point-in-time audit report) and C (CI fixture, cost participation stats, docs) are pending.
+  - **Phase B done:** `quant audit pit`.
+    - Delisted stocks are covered (459). 173 listed stocks have been silent for more than 30 days
+      (suspensions).
+    - Limit flags are band-sensitive on 2% to 8% of liquid rows.
+    - A write-down of stuck positions lowers every CAGR, by 0.5 to 7 points; no verdict changes.
+    - Pending decision: the valuation policy for future evaluations (recommended: report both, and
+      judge on the worse).
+  - Phase C (CI fixture, cost participation stats, docs) is pending.
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

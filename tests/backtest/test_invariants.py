@@ -93,3 +93,19 @@ def test_marks_skip_sessions_without_trades():
     assert traded.invested[3] == pytest.approx(traded.invested[2])          # the no-trade close is not a mark
     assert legacy.invested[3] == pytest.approx(legacy.invested[2] * 1.3)    # legacy marks the reference price
     assert traded.invested[4] == pytest.approx(legacy.invested[4])          # same again after a traded close
+
+
+def test_writedown_values_stocks_that_stop_trading_at_zero():
+    close = np.full(30, 10.0)
+    traded = np.r_[np.ones(4), np.zeros(26)]                                # stops trading after session 3
+    m = market(close.copy(), close.copy(), signal=[1] + [np.nan] * 29, traded=traded)
+    s = Strategy(hold_sessions=3, max_positions=1, renew=False, initial_equity=1000.0)
+    keep, cut = run(m, s), run(m, s, writedown_after=10)
+    assert keep.invested[-1] > 0 and cut.invested[-1] == 0.0                 # stuck: cannot be sold, written down
+    assert cut.invested[13] == pytest.approx(keep.invested[13]) and cut.invested[14] == 0.0
+    from tests.backtest.test_portfolio import no_industry
+    c = Construction(n_names=1, entry_rank=1, exit_rank=1, min_adv_value=-1)
+    m.adv_value[...] = 1e12
+    p_keep = run_targets(m, c, lambda i: np.array([1.0]), "monthly", 1000.0, no_industry(m))
+    p_cut = run_targets(m, c, lambda i: np.array([1.0]), "monthly", 1000.0, no_industry(m), writedown_after=10)
+    assert p_keep.equity[-1] > p_cut.equity[-1] == pytest.approx(p_cut.cash[-1])

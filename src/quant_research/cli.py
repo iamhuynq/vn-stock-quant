@@ -276,6 +276,14 @@ def cmd_portfolio(config: str, period: str) -> int:
     return 0
 
 
+def cmd_audit() -> int:
+    from quant_research.audit import render
+    warehouse, research = _paths()
+    build_id, text = render(warehouse, research)
+    print(f"Point-in-time audit (descriptive, not logged): {_write_report(f'audit-pit-{build_id}', text)}")
+    return 0
+
+
 def cmd_factors_describe() -> int:
     from quant_research.factor_report import render
     _, research = _paths()
@@ -350,6 +358,8 @@ def main(argv: list[str] | None = None) -> int:
     ix = sub.add_parser("interactions", help="Interaction Engine: factor IC by market regime (logged)")
     ix.add_argument("interactions_command", choices=("scan",))
     ix.add_argument("--period", default="research", choices=("research", "validation", "holdout", "forward"))
+    au = sub.add_parser("audit", help="Data audits (descriptive, not logged)")
+    au.add_argument("audit_command", choices=("pit",), help="pit: point-in-time and survivorship audit")
     fc = sub.add_parser("factors", help="Factor Engine (factor set f1)")
     fc.add_argument("factors_command", choices=("describe",),
                     help="describe: factor structure on the research period (descriptive, no returns)")
@@ -380,6 +390,8 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_econ(args.strategy, args.period)
         if args.command == "interactions":
             return cmd_interactions(args.period)
+        if args.command == "audit":
+            return cmd_audit()
         if args.command == "factors":
             return cmd_factors_describe()
         if args.command == "registry":

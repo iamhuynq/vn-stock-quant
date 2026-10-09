@@ -113,7 +113,9 @@ def random_selector(seed: int, fraction: float = 0.1) -> Selector:
 
 
 def run(market: Market, strategy: Strategy, selector: Selector = signal_selector,
-        costs: CostModel | None = None, mark: str = "traded") -> Result:
+        costs: CostModel | None = None, mark: str = "traded", writedown_after: int | None = None) -> Result:
+    """writedown_after: value a position at 0 while it has not traded for more than this many sessions
+    (valuation sensitivity for stocks that stop trading; None = keep the last mark)."""
     if mark not in ("traded", "legacy"):
         raise ValueError(f"unknown mark {mark!r}")
     n = len(market.dates)
@@ -182,7 +184,8 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
             cash += _proceeds(pos, close, strategy, extra)
             _sell(res, positions, j, i, close, strategy, market, "planned", extra)
 
-        invested = sum(p.shares * p.last_price for p in positions.values())
+        invested = sum(p.shares * p.last_price for p in positions.values()
+                       if writedown_after is None or i - p.last_trade <= writedown_after)
         if invested > 0:
             stale = sum(p.shares * p.last_price for p in positions.values()
                         if i - p.last_trade > STALE_SESSIONS) / invested
