@@ -1,5 +1,6 @@
 """Report of the construction grid, with the reading rule declared in docs/portfolio-construction-plan.md."""
 
+import numpy as np
 import pandas as pd
 
 from quant_research.backtest.metrics import WRITEDOWN_SESSIONS
@@ -26,14 +27,28 @@ def latest_runs(store: ResultsStore) -> dict[str, str]:
 
 
 def verdict(get, capital: float = DECISION[0]) -> tuple[bool, list[str]]:
-    cagr = get((capital, DECISION[1], "strategy", "cagr"))
+    """The declared reading rule, judged on the WORSE valuation (valuation policy of 2026-10-09): CAGR and
+    break-even are the lower of the default marks and the write-down of stuck positions. Missing numbers fail.
+    The matched-random criterion compares under the default marks, the valuation its control runs use."""
+    wd = f"writedown_{WRITEDOWN_SESSIONS}"
+    cagrs = [get((capital, DECISION[1], s, "cagr")) for s in ("strategy", wd)]
+    bes = [get((capital, DECISION[1], s, "break_even_extra_cost_per_side")) for s in ("strategy", wd)]
     ew = get((capital, "gross", "equal_weight", "cagr"))
     share = get((capital, DECISION[1], "random_construction", "share_beaten"))
-    be = get((capital, DECISION[1], "strategy", "break_even_extra_cost_per_side"))
-    checks = [("beats equal weight", cagr is not None and ew is not None and cagr > ew),
-              (f"beats >= {MIN_SHARE_BEATEN:.0%} of matched random runs", share is not None and share >= MIN_SHARE_BEATEN),
-              (f"break-even >= {MIN_BREAK_EVEN:.1%} per side over v1", be is not None and be >= MIN_BREAK_EVEN)]
-    return all(ok for _, ok in checks), [f"{'pass' if ok else 'fail'}: {name}" for name, ok in checks]
+    cagr = None if any(_missing(x) for x in cagrs) else min(cagrs)
+    be = None if any(_missing(x) for x in bes) else min(bes)
+    checks = [("beats equal weight (worse valuation)", cagr is not None and not _missing(ew) and cagr > ew),
+              (f"beats >= {MIN_SHARE_BEATEN:.0%} of matched random runs", not _missing(share) and share >= MIN_SHARE_BEATEN),
+              (f"break-even >= {MIN_BREAK_EVEN:.1%} per side over v1 (worse valuation)",
+               be is not None and be >= MIN_BREAK_EVEN)]
+    notes = [f"{'pass' if ok else 'fail'}: {name}" for name, ok in checks]
+    if cagr is None or be is None:
+        notes.append(f"write-down valuation missing ({wd}): counted as a fail")
+    return all(ok for _, ok in checks), notes
+
+
+def _missing(v) -> bool:
+    return v is None or (isinstance(v, float) and np.isnan(v))
 
 
 def render(store: ResultsStore, run_ids: dict[str, str]) -> str:

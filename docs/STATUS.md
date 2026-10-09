@@ -87,7 +87,9 @@ Registry). Summary:
     - order-size statistics: the frozen strategy hits the 5% ADV cap on every order from 10 bn VND;
     - an end-to-end CLI test on an integration fixture runs in CI;
     - the industry cap is declared rebalance-time.
-  - Commits on branch `execution-audit`, not pushed. The user pushes and opens the pull request.
+  - Branch `execution-audit`, PR #2. Its review asked for three fixes: NULL validation, the worse
+    valuation in the verdict, and `last_trade` in legacy mode. They are a new commit, and the grid was
+    re-run with no verdict change. The user pushes and merges.
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

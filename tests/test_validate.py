@@ -83,7 +83,8 @@ def test_error_checks_are_clean_on_normal_data(wh):
     _two_recent_sessions_with_peers(wh.connection)
     results = results_by_name(wh.connection)
     assert {r.check.name: r.count for r in results.values() if r.check.severity == "error"} == {
-        "latest_session_incomplete": 0, "recent_nonpositive_prices": 0, "recent_corrupt_source_dates": 0}
+        "latest_session_incomplete": 0, "recent_missing_required_fields": 0, "recent_nonpositive_prices": 0,
+        "recent_corrupt_source_dates": 0}
 
 
 def test_error_checks_detect_a_broken_latest_session(wh):
@@ -116,3 +117,23 @@ def test_accepted_list_has_reasons():
     names = {c.name for c in CHECKS if c.severity == "error"}
     for check, entries in ACCEPTED.items():
         assert check in names and all(len(reason) > 20 for reason in entries.values())
+
+
+@pytest.mark.parametrize("column", ["price_open", "price_high", "price_low", "price_close", "price_basic",
+                                    "total_volume", "deal_volume", "putthrough_volume"])
+def test_missing_required_fields_are_errors(wh, column):
+    """A NULL makes `x <= 0` or `abs(...) > 0.5` NULL, not TRUE: missing data needs its own check."""
+    con = wh.connection
+    _, d2 = _two_recent_sessions_with_peers(con)
+    con.execute(f"UPDATE quotes_daily SET {column} = NULL WHERE symbol = 'PEER3' AND date = ?", [d2])
+    results = results_by_name(con)
+    assert results["recent_missing_required_fields"].count == 1, column
+    assert results["recent_nonpositive_prices"].count == 0 and results["recent_corrupt_source_dates"].count == 0
+
+
+def test_missing_fields_on_no_trade_rows_only_require_close_basic_and_volume(wh):
+    con = wh.connection
+    _, d2 = _two_recent_sessions_with_peers(con)
+    con.execute("""UPDATE quotes_daily SET total_volume = 0, deal_volume = NULL, price_open = NULL
+                   WHERE symbol = 'PEER4' AND date = ?""", [d2])            # a no-trade row: not required
+    assert results_by_name(con)["recent_missing_required_fields"].count == 0

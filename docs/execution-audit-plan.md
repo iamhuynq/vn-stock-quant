@@ -299,3 +299,29 @@ rebalance.
 (valuation rule).
 
 Full suite: 367 passed. `scripts/daily.sh` was also checked with GNU-like `date`/`stat` shims.
+
+## PR #2 review fixes (2026-10-09, approved)
+
+Code review of PR #2: two P2 findings and one P3, all confirmed in the code and fixed.
+
+| Finding | Fix |
+|---------|-----|
+| P2: validation misses NULLs (`price <= 0` and `abs(...) > 0.5` are NULL, not TRUE; a NULL `total_volume` even hides a row from every traded-row check) | New error check `recent_missing_required_fields`, last 5 sessions. `price_close`, `price_basic` and `total_volume` must be present on every row; OHLC, `deal_volume` and `putthrough_volume` on traded rows. Missing data and values that disagree are reported by separate checks. The real warehouse has no such NULLs, so nothing is blocked today |
+| P2: the write-down policy did not enter pass/fail | `verdict()` judges CAGR and break-even on the **worse** of the default marks and the 60-session write-down; the evaluation now also computes the write-down break-even. A missing write-down number fails. The matched-random criterion stays on the default marks, the valuation its control runs use |
+| P3: `mark="legacy"` set `last_trade` on no-trade sessions | `last_trade` is the last session that really traded, in every mode; `legacy` changes only the mark. The paper portfolio stays bit-identical (checked on the 2026-10-07 record) |
+
+Tests:
+- each NULL case is an error, and no-trade rows only need close, reference price and volume;
+- the reading rule fails when only the default valuation passes, and when the write-down number is
+  missing.
+
+Full suite: 377 passed.
+
+Grid re-run: `20261009T171446-portfolio-C*-research`; the earlier runs were invalidated because they
+predate the write-down numbers. Backup: `data/results.before-pr2-fixes.duckdb`.
+- No verdict changes: all six fail "beats equal weight" and the break-even, on the worse valuation.
+- The default numbers are unchanged; the write-down CAGRs match the phase B audit (C1 -30.5% to C6 -3.4%).
+
+**Scope of the audit.** The point-in-time audit measures the data limits and makes them public. It does
+not remove survivorship bias, and it does not make attributes known only today (exchange, industry)
+point in time. It is not evidence that the data is fully point in time.

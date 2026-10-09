@@ -48,6 +48,17 @@ CHECKS: tuple[Check, ...] = (
         SELECT cur.date::VARCHAR AS date, cur.traded, prev.traded AS previous_traded
         FROM n cur JOIN n prev ON prev.date < cur.date
         WHERE cur.date = (SELECT max(date) FROM n) AND cur.traded < {LATEST_COVERAGE} * prev.traded"""),
+    Check("recent_missing_required_fields", "error",
+          f"NULL in a required field in the last {RECENT_SESSIONS} sessions: price_close, price_basic or total_volume on "
+          "any row; price_open/high/low, deal_volume or putthrough_volume on a traded row (missing data, as opposed to "
+          "values that disagree)", f"""
+        SELECT date::VARCHAR AS date, symbol, price_open, price_high, price_low, price_close, price_basic,
+               total_volume, deal_volume, putthrough_volume
+        FROM quotes_daily
+        WHERE date IN {_RECENT} AND {INDEX_FILTER}
+          AND (price_close IS NULL OR price_basic IS NULL OR total_volume IS NULL
+               OR (total_volume > 0 AND (price_open IS NULL OR price_high IS NULL OR price_low IS NULL
+                                         OR deal_volume IS NULL OR putthrough_volume IS NULL)))"""),
     Check("recent_nonpositive_prices", "error",
           f"traded rows with a zero or negative price in the last {RECENT_SESSIONS} sessions", f"""
         SELECT date::VARCHAR AS date, symbol, price_open, price_high, price_low, price_close, total_volume

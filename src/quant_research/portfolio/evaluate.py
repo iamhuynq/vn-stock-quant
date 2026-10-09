@@ -153,10 +153,12 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
     rows += [(DECISION[0], DECISION[1], f"writedown_{WRITEDOWN_SESSIONS}", "cagr", curve_metrics(written.equity)["cagr"])]
     optimistic = simulate(DECISION[0], COSTS[DECISION[1]], sell_lag=SELL_LAG_OPTIMISTIC)
     rows += [(DECISION[0], DECISION[1], "sell_lag_2", k, v) for k, v in _metrics(optimistic, DECISION[0]).items()]
+    ew_cagr = curve_metrics(equal_weight_curve(market.close, market.universe, DECISION[0]))["cagr"]
     for cname, model in (("flat", FLAT_AS_MODEL), ("v1_k1", COSTS["v1_k1"])):
         rows.append((DECISION[0], cname, "strategy", "break_even_extra_cost_per_side",
-                     _break_even(simulate, DECISION[0], model, curve_metrics(equal_weight_curve(
-                         market.close, market.universe, DECISION[0]))["cagr"])))
+                     _break_even(simulate, DECISION[0], model, ew_cagr)))
+    rows.append((DECISION[0], DECISION[1], f"writedown_{WRITEDOWN_SESSIONS}", "break_even_extra_cost_per_side",
+                 _break_even(simulate, DECISION[0], COSTS[DECISION[1]], ew_cagr, writedown_after=WRITEDOWN_SESSIONS)))
     p = None
     if decision_curve is not None:
         excess = np.diff(np.log(decision_curve)) - np.diff(np.log(ew_curve))
@@ -231,9 +233,11 @@ def _control(simulate, capital: float, model: CostModel | None, res: PortfolioRe
             (capital, "v1_k1", "random_construction", "median_turnover_per_year", float(np.nanmedian(turnover)))]
 
 
-def _break_even(simulate, capital: float, model: CostModel, target: float, iterations: int = 14) -> float:
+def _break_even(simulate, capital: float, model: CostModel, target: float, iterations: int = 14,
+                writedown_after: int | None = None) -> float:
     def gap(x: float) -> float:
-        return curve_metrics(simulate(capital, replace(model, extra_flat=x)).equity)["cagr"] - target
+        res = simulate(capital, replace(model, extra_flat=x), writedown_after=writedown_after)
+        return curve_metrics(res.equity)["cagr"] - target
     if gap(0.0) <= 0:
         return 0.0
     if gap(BREAK_EVEN_MAX) > 0:

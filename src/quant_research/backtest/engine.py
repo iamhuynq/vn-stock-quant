@@ -169,8 +169,9 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
                 res.data_error_exits += 1
                 continue
             if not np.isnan(close) and (mark == "legacy" or market.traded[i, j]):
-                pos.last_price = close
-                pos.last_trade = i
+                pos.last_price = close                  # the mark (legacy also takes reference prices)
+            if not np.isnan(close) and market.traded[i, j]:
+                pos.last_trade = i                      # the last session that really traded, in every mode
             if i < pos.planned_exit or i < pos.entry_index + 2:
                 continue
             if strategy.renew and j in candidate_set:

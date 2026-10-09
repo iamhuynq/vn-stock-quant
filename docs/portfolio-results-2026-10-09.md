@@ -142,3 +142,11 @@ These runs were re-run and the earlier ones invalidated:
 No verdict changes; the numbers move by at most 0.8 point of CAGR. A new limitation was found: positions in
 stocks that stop trading cannot be sold and keep their last price, which flatters results. See "New
 finding: stuck positions" in the audit plan.
+
+## Update: PR #2 review (2026-10-09)
+
+The reading rule is now judged on the worse of the default marks and the 60-session write-down of stuck
+positions.
+- Current runs: `20261009T171446-portfolio-C1..C6-research`.
+- Report: `data/reports/research/portfolio-grid-20261009T171446.md`.
+- No verdict changes.
