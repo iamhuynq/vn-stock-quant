@@ -143,7 +143,8 @@ def render_daily(store: ResultsStore, result: DailyResult, now: datetime, day: d
 def _paper_lines(con, run_date: date | None, d: date, positions: bool) -> list[str]:
     """Paper portfolio as of session d, from the latest re-simulation (run_date)."""
     lines = ["", "## Paper portfolio (frozen strategy 72c851c7, since " + str(FORWARD_START) + ")", ""]
-    last = con.execute("""SELECT date, equity, random_p05, random_median, random_p95, equal_weight, vnindex, n_positions
+    last = con.execute("""SELECT date, equity, random_p05, random_median, random_p95, equal_weight, vnindex, n_positions,
+                                 equity_traded_mark
                           FROM paper_daily WHERE run_date = ? AND date <= ? ORDER BY date DESC LIMIT 1""",
                        [run_date, d]).fetchone()
     if last is None:
@@ -153,6 +154,9 @@ def _paper_lines(con, run_date: date | None, d: date, positions: bool) -> list[s
         lines += [f"- Strategy: {_pct(last[1] / start - 1)} | random control median {_pct(last[3] / start - 1)} "
                   f"[p5 {_pct(last[2] / start - 1)}, p95 {_pct(last[4] / start - 1)}] | equal weight "
                   f"{_pct(last[5] / start - 1)} | VNINDEX {_pct(last[6] / start - 1)} | positions {last[7]}"]
+        if last[8] is not None:
+            lines.append(f"- Marked at last traded closes (information; the pre-registered record above keeps the "
+                         f"reference price of no-trade sessions): {_pct(last[8] / start - 1)}")
         pos = con.execute("""SELECT symbol, entry_date, entry_price, last_price FROM paper_positions
                              WHERE run_date = ? ORDER BY symbol""", [run_date]).fetchall() if positions else []
         if pos:

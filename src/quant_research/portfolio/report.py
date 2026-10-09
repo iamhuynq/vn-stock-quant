@@ -72,9 +72,12 @@ def render(store: ResultsStore, run_ids: dict[str, str]) -> str:
                     f"{_num(get((*d[:2], 'strategy', 'industry_cap_breach_sessions')), '.0f')} (after trades "
                     f"{_num(get((*d[:2], 'strategy', 'industry_cap_breach_after_trades')), '.0f')}); orders blocked "
                     f"{_num(get((*d[:2], 'strategy', 'orders_blocked')), '.0f')} (T+2 "
-                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked_t2')), '.0f')}, no ADV "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked_t2')), '.0f')}, T+2 partial "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_partial_t2')), '.0f')}, no ADV "
                     f"{_num(get((*d[:2], 'strategy', 'orders_blocked_no_adv')), '.0f')}); data-error exits "
-                    f"{_num(get((*d[:2], 'strategy', 'data_error_exits')), '.0f')}. Sensitivity sell lag 2 (optimistic "
+                    f"{_num(get((*d[:2], 'strategy', 'data_error_exits')), '.0f')}; value marked with a price older than "
+                    f"5 sessions: mean {_num(get((*d[:2], 'strategy', 'stale_value_share_mean')), '.1%')}, max "
+                    f"{_num(get((*d[:2], 'strategy', 'stale_value_share_max')), '.1%')}. Sensitivity sell lag 2 (optimistic "
                     f"T+2): CAGR {_pct(get((*d[:2], 'sell_lag_2', 'cagr')))} vs {_pct(get((*d[:2], 'strategy', 'cagr')))}.",
                     "",
                     "| Capital (bn VND) | Costs | CAGR | Sharpe | Max DD | Turnover / yr | Costs paid (x initial) | "

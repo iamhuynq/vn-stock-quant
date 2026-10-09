@@ -180,6 +180,8 @@ def _metrics(res: PortfolioResult, initial: float) -> dict[str, float]:
           "industry_cap_breach_after_trades": float(res.industry_cap_breach_after_trades),
           "orders_capped": float(res.orders_capped), "orders_blocked": float(res.orders_blocked),
           "orders_blocked_no_adv": float(res.orders_blocked_no_adv), "orders_blocked_t2": float(res.orders_blocked_t2),
+          "orders_partial_t2": float(res.orders_partial_t2), "stale_value_share_mean": res.stale_value_share_mean,
+          "stale_value_share_max": res.stale_value_share_max,
           "cost_fallbacks": float(res.cost_fallbacks),
           "data_error_exits": float(res.data_error_exits)}
     return m

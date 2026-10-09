@@ -66,3 +66,53 @@ def test_export_parquet_round_trip(wh, tmp_path):
     assert written["quotes_daily"] == 50
     rows = duckdb.sql(f"SELECT count(*) FROM read_parquet('{(tmp_path / 'parquet' / 'report_marks.parquet').as_posix()}')").fetchone()[0]
     assert rows == 38
+
+
+def _two_recent_sessions_with_peers(con, n: int = 10):
+    """Copies of one VOS row as n stocks traded on the last two VNINDEX sessions."""
+    d1, d2 = [r[0] for r in con.execute("""SELECT DISTINCT date FROM quotes_daily WHERE symbol = 'VNINDEX'
+                                           ORDER BY date DESC LIMIT 2""").fetchall()][::-1]
+    for i in range(n):
+        for d in (d1, d2):
+            con.execute("""INSERT INTO quotes_daily SELECT * REPLACE (? AS symbol, ?::DATE AS date)
+                           FROM quotes_daily WHERE symbol = 'VOS' AND total_volume > 0 LIMIT 1""", [f"PEER{i}", d])
+    return d1, d2
+
+
+def test_error_checks_are_clean_on_normal_data(wh):
+    _two_recent_sessions_with_peers(wh.connection)
+    results = results_by_name(wh.connection)
+    assert {r.check.name: r.count for r in results.values() if r.check.severity == "error"} == {
+        "latest_session_incomplete": 0, "recent_nonpositive_prices": 0, "recent_corrupt_source_dates": 0}
+
+
+def test_error_checks_detect_a_broken_latest_session(wh):
+    con = wh.connection
+    _, d2 = _two_recent_sessions_with_peers(con)
+    con.execute("UPDATE quotes_daily SET total_volume = 0 WHERE symbol IN ('PEER0', 'PEER1', 'PEER2') AND date = ?", [d2])
+    con.execute("UPDATE quotes_daily SET price_close = 0 WHERE symbol = 'PEER5' AND date = ?", [d2])
+    con.execute("UPDATE quotes_daily SET deal_volume = total_volume + 1000 WHERE symbol LIKE 'PEER%' AND date = ?", [d2])
+    results = results_by_name(con)
+    assert results["latest_session_incomplete"].count == 1            # 7 of 10 traded: below 80%
+    assert results["recent_nonpositive_prices"].count == 1
+    assert results["recent_corrupt_source_dates"].count == 1
+    report = render_validation_report(list(results.values()), {"quotes_daily": 50}, NOW)
+    assert "## latest_session_incomplete (error, 1)" in report
+
+
+def test_accepted_findings_are_reported_but_not_counted(wh):
+    con = wh.connection
+    _, d2 = _two_recent_sessions_with_peers(con)
+    con.execute("UPDATE quotes_daily SET price_close = 0 WHERE symbol = 'PEER5' AND date = ?", [d2])
+    accepted = {"recent_nonpositive_prices": {str(d2): "test: investigated"}}
+    r = {x.check.name: x for x in run_checks(con, accepted=accepted)}["recent_nonpositive_prices"]
+    assert (r.count, r.accepted) == (0, 1)
+    report = render_validation_report([r], {"quotes_daily": 50}, NOW)
+    assert "(+1 accepted)" in report
+
+
+def test_accepted_list_has_reasons():
+    from fireant_crawler.validate.accepted import ACCEPTED
+    names = {c.name for c in CHECKS if c.severity == "error"}
+    for check, entries in ACCEPTED.items():
+        assert check in names and all(len(reason) > 20 for reason in entries.values())

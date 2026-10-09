@@ -81,3 +81,17 @@ recommended evaluation:
 
 High-turnover signals in small stocks are very unlikely to survive. The interaction candidates (registry
 `P7-IX-*`) would need low-turnover implementations; momentum 12-1 has a 20-session rank persistence of 0.90.
+
+## Update: execution audit (2026-10-09)
+
+After the execution audit (`docs/execution-audit-plan.md`, phase A):
+- per-lot T+2;
+- marks at last traded closes;
+- invalid ADV blocked in both engines.
+
+These runs were re-run and the earlier ones invalidated:
+- economic evaluation: `20261009T153612-econ-frozen-research`. Break-even over flat costs is now 0.392% per side (it was 0.415%); every other figure in the main table is unchanged to 0.1 point.
+
+No verdict changes; the numbers move by at most 0.8 point of CAGR. A new limitation was found: positions in
+stocks that stop trading cannot be sold and keep their last price, which flatters results. See "New
+finding: stuck positions" in the audit plan.

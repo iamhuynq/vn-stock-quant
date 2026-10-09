@@ -70,5 +70,10 @@ def render(store: ResultsStore, run_id: str) -> str:
               f"- on top of `flat` costs: **{_num(be_flat, '.3%')}** (the spread + impact the strategy can absorb);",
               f"- on top of `v1_k1`: **{_num(be_v1, '.3%')}**.", "",
               f"Trades priced with a fallback input (no spread / volatility / ADV estimate): {_num(fallbacks, '.0f')} "
-              "at 1 bn VND."]
+              "at 1 bn VND.", "",
+              "Marking: positions at their last traded close (a no-trade session keeps the previous mark). Invested "
+              "value marked with a price older than 5 sessions at 1 bn VND, v1: mean "
+              f"{_num(v(BREAK_EVEN_CAPITAL, 'v1_k1', 'strategy', 'stale_value_share_mean'), '.1%')}, max "
+              f"{_num(v(BREAK_EVEN_CAPITAL, 'v1_k1', 'strategy', 'stale_value_share_max'), '.1%')}; entries blocked "
+              f"for a missing ADV: {_num(v(BREAK_EVEN_CAPITAL, 'v1_k1', 'strategy', 'entries_blocked_no_adv'), '.0f')}."]
     return "\n".join(lines)

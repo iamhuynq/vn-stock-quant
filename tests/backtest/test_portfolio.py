@@ -18,7 +18,7 @@ from tests.backtest.test_engine import market as _market
 from tests.backtest.test_engine import random_market as _random_market
 
 NOW = datetime(2026, 10, 9, 20, 0, tzinfo=UTC)
-BIG_ADV = 1e12            # the event-engine helpers use an infinite ADV, which this engine treats as invalid
+BIG_ADV = 1e12            # finite and large: an invalid ADV blocks orders
 
 
 def market(*args, **kwargs):

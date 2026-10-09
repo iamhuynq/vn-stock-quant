@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS daily_events (
 CREATE TABLE IF NOT EXISTS paper_daily (
     run_date DATE NOT NULL, date DATE NOT NULL, equity DOUBLE, random_p05 DOUBLE, random_median DOUBLE,
     random_p95 DOUBLE, equal_weight DOUBLE, vnindex DOUBLE, n_positions INTEGER, PRIMARY KEY (run_date, date));
+-- Added 2026-10-09 (execution audit): the same strategy marked at last traded closes (information only).
+ALTER TABLE paper_daily ADD COLUMN IF NOT EXISTS equity_traded_mark DOUBLE;
 CREATE TABLE IF NOT EXISTS paper_positions (
     run_date DATE NOT NULL, symbol VARCHAR NOT NULL, entry_date DATE, shares DOUBLE, entry_price DOUBLE,
     last_price DOUBLE, PRIMARY KEY (run_date, symbol));
@@ -134,17 +136,19 @@ def run_paper(store: ResultsStore, run_date: date, strategy: Strategy = FROZEN_S
     m = load_market(store.con, FORWARD_START, run_date, rule)
     if len(m.dates) < 2:
         return len(m.dates)
-    res = run(m, strategy, signal_selector)
-    rnd = np.array([run(m, strategy, random_selector(seed)).equity for seed in range(n_random)])
+    res = run(m, strategy, signal_selector, mark="legacy")        # pre-registered measurement
+    rnd = np.array([run(m, strategy, random_selector(seed), mark="legacy").equity for seed in range(n_random)])
+    traded = run(m, strategy, signal_selector, mark="traded").equity      # information: last traded closes
     ew = equal_weight_curve(m.close, m.universe, strategy.initial_equity)
     vn = strategy.initial_equity * m.index_close / m.index_close[0]
     p05, med, p95 = np.percentile(rnd, [5, 50, 95], axis=0)
     con = store.con
     con.execute("DELETE FROM paper_daily WHERE run_date = ?", [run_date])
     con.execute("DELETE FROM paper_positions WHERE run_date = ?", [run_date])
-    con.executemany("INSERT INTO paper_daily VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+    con.executemany("""INSERT INTO paper_daily (run_date, date, equity, random_p05, random_median, random_p95,
+                       equal_weight, vnindex, n_positions, equity_traded_mark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
         (run_date, d.item(), float(res.equity[i]), float(p05[i]), float(med[i]), float(p95[i]), float(ew[i]),
-         float(vn[i]), int(res.n_positions[i])) for i, d in enumerate(m.dates)])
+         float(vn[i]), int(res.n_positions[i]), float(traded[i])) for i, d in enumerate(m.dates)])
     con.executemany("INSERT INTO paper_positions VALUES (?, ?, ?, ?, ?, ?)", [
         (run_date, t.symbol, m.dates[t.entry_index].item(), t.shares, t.entry_price, t.exit_price)
         for t in res.trades if t.exit_reason == "open_at_end"])

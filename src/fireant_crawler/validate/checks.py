@@ -28,9 +28,40 @@ class CheckResult:
     count: int
     sample: list[tuple]
     columns: list[str]
+    accepted: int = 0     # error-level rows listed in validate/accepted.py (not counted)
 
+
+# The last sessions of the VNINDEX calendar: error checks look at the data the next build will use.
+RECENT_SESSIONS = 5
+_RECENT = f"""(SELECT date FROM (SELECT DISTINCT date FROM quotes_daily WHERE symbol = 'VNINDEX')
+              ORDER BY date DESC LIMIT {RECENT_SESSIONS})"""
+LATEST_COVERAGE = 0.8      # since 2015 only one session fell below this ratio of traded stocks
 
 CHECKS: tuple[Check, ...] = (
+    Check("latest_session_incomplete", "error",
+          f"the latest session has fewer than {LATEST_COVERAGE:.0%} of the previous session's traded stocks "
+          "(incomplete download or mapping error)", f"""
+        WITH s AS (SELECT date, row_number() OVER (ORDER BY date DESC) AS k
+                   FROM (SELECT DISTINCT date FROM quotes_daily WHERE symbol = 'VNINDEX')),
+        n AS (SELECT q.date, count(*) FILTER (WHERE q.total_volume > 0) AS traded FROM quotes_daily q
+              JOIN s USING (date) WHERE s.k <= 2 AND {INDEX_FILTER} GROUP BY q.date)
+        SELECT cur.date::VARCHAR AS date, cur.traded, prev.traded AS previous_traded
+        FROM n cur JOIN n prev ON prev.date < cur.date
+        WHERE cur.date = (SELECT max(date) FROM n) AND cur.traded < {LATEST_COVERAGE} * prev.traded"""),
+    Check("recent_nonpositive_prices", "error",
+          f"traded rows with a zero or negative price in the last {RECENT_SESSIONS} sessions", f"""
+        SELECT date::VARCHAR AS date, symbol, price_open, price_high, price_low, price_close, total_volume
+        FROM quotes_daily
+        WHERE date IN {_RECENT} AND {INDEX_FILTER} AND total_volume > 0
+          AND (price_open <= 0 OR price_high <= 0 OR price_low <= 0 OR price_close <= 0)"""),
+    Check("recent_corrupt_source_dates", "error",
+          f"source-wide volume-split corruption (> 20% of traded stocks) in the last {RECENT_SESSIONS} sessions",
+          f"""
+        SELECT date::VARCHAR AS date,
+               count(*) FILTER (WHERE abs(total_volume - deal_volume - putthrough_volume) > 0.5) AS bad,
+               count(*) AS traded
+        FROM quotes_daily WHERE date IN {_RECENT} AND {INDEX_FILTER} AND total_volume > 0
+        GROUP BY date HAVING bad > 0.2 * traded AND bad >= 5 ORDER BY date"""),
     Check("ohlc_consistency", "warn", "low <= min(open, close) and high >= max(open, close) (source anomalies)", """
         SELECT symbol, date, price_open, price_high, price_low, price_close FROM quotes_daily
         WHERE total_volume > 0 AND (price_low > least(price_open, price_close) + 1e-9
@@ -116,9 +147,23 @@ CHECKS: tuple[Check, ...] = (
 SAMPLE_SIZE = 8
 
 
-def run_checks(con: duckdb.DuckDBPyConnection, checks: tuple[Check, ...] = CHECKS) -> list[CheckResult]:
+def run_checks(con: duckdb.DuckDBPyConnection, checks: tuple[Check, ...] = CHECKS,
+               accepted: dict[str, dict[str, str]] | None = None) -> list[CheckResult]:
+    """Error-level rows whose first column is listed in `accepted` (default: validate/accepted.py) are not
+    counted; they are reported as accepted."""
+    if accepted is None:
+        from fireant_crawler.validate.accepted import ACCEPTED as accepted
     results = []
     for check in checks:
+        if check.severity == "error":
+            cursor = con.execute(check.sql)
+            columns = [d[0] for d in cursor.description]
+            rows = cursor.fetchall()
+            keys = accepted.get(check.name, {})
+            open_rows = [r for r in rows if str(r[0]) not in keys]
+            results.append(CheckResult(check, len(open_rows), open_rows[:SAMPLE_SIZE], columns,
+                                       len(rows) - len(open_rows)))
+            continue
         count = con.execute(f"SELECT count(*) FROM ({check.sql})").fetchone()[0]
         cursor = con.execute(f"SELECT * FROM ({check.sql}) LIMIT {SAMPLE_SIZE}")
         columns = [d[0] for d in cursor.description]
@@ -130,7 +175,8 @@ def render_validation_report(results: list[CheckResult], totals: dict[str, int],
     lines = [f"# Validation report - {generated_at.isoformat(timespec='seconds')}", "", "## Table sizes"]
     lines += [f"- {name}: {count:,}" for name, count in totals.items()]
     lines += ["", "## Summary", "", "| check | severity | offending rows | rule |", "|---|---|---|---|"]
-    lines += [f"| {r.check.name} | {r.check.severity} | {r.count:,} | {r.check.description} |" for r in results]
+    lines += [f"| {r.check.name} | {r.check.severity} | {r.count:,}" + (f" (+{r.accepted} accepted)" if r.accepted else "")
+              + f" | {r.check.description} |" for r in results]
     for r in results:
         if not r.count:
             continue

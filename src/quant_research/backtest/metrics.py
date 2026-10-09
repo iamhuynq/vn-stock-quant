@@ -58,6 +58,9 @@ def strategy_metrics(res: Result, initial: float) -> dict[str, float]:
         "exits_delayed": float(res.exits_delayed),
         "data_error_exits": float(res.data_error_exits),
         "open_at_end": float(sum(t.exit_reason == "open_at_end" for t in res.trades)),
+        "entries_blocked_no_adv": float(res.entries_blocked_no_adv),
+        "stale_value_share_mean": res.stale_value_share_mean,
+        "stale_value_share_max": res.stale_value_share_max,
     }
     return m
 
