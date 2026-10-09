@@ -45,6 +45,8 @@ Registry). Summary:
   - Top-20 momentum 12-1 underperforms even before costs: extreme winners lag, and it is worse than
     random portfolios with the same turnover.
   - Order flow beats turnover-matched random portfolios, but cannot pay its costs.
+  - Industry caps hold at rebalance only: actual weights reach 36% to 44% between rebalances. T+2 is
+    immaterial (PR #1 review fixes).
   - The Bear filter helps, but not enough. `P7-IX-momentum_12_1-direction` is rejected
     (`portfolio-results-2026-10-09.md`).
 - Cross-stock lead-lag lives in the opening gap (stale prices), not in tradable returns.
@@ -59,8 +61,10 @@ Registry). Summary:
 
 ## Open items
 
-- Committed on 2026-10-09 to branch `research-platform` (one commit on top of `9b8bdf8`); not pushed.
-  The user pushes: `git push -u origin research-platform`, then merges into `main` on GitHub.
+- Branch `research-platform`, pull request #1 into `main`.
+  - Commit `a74ac2f` was reviewed with "request changes". The fixes are a second commit (see "PR #1 review
+    fixes" in `portfolio-construction-plan.md`).
+  - The user pushes and merges.
   `CLAUDE.md` stays local: it is ignored by the user's global gitignore.
 - Whitelist tightened (2026-10-09). Tickers are upper-case letters and digits with at most one upper-case
   hyphen suffix; ICB codes are digits only. `/symbols/all-financial-data` and other lower-case endpoint
@@ -76,5 +80,5 @@ Registry). Summary:
      (research period) before a pre-registration. The portfolio control is persistence-matched
      (fixed 2026-10-09).
 - Backups `data/results.before-registry.duckdb`, `data/results.before-interactions.duckdb`,
-  `data/results.before-econ.duckdb`, `data/results.before-portfolio.duckdb` and
-  `data/results.before-portfolio-v2.duckdb` can be deleted once the user is satisfied.
+  `data/results.before-econ.duckdb` and `data/results.before-portfolio*.duckdb` (v1 to v3) can be deleted
+  once the user is satisfied.

@@ -30,6 +30,8 @@ CAPITALS = (1e9, 10e9, 100e9)
 COSTS: dict[str, CostModel | None] = {"flat": None, "v1_k1": CostModel(k=1.0),
                                       "v1_k1_tick": CostModel(k=1.0, spread="tick")}
 DECISION = (1e9, "v1_k1")
+SELL_LAG = 3                    # T+2 assumption: first sale at the open of b + 3 (see portfolio/engine.py)
+SELL_LAG_OPTIMISTIC = 2         # sensitivity, decision setting only
 N_CONTROL = 20
 TEST_LAG = 10
 BREAK_EVEN_MAX = 0.05
@@ -121,8 +123,10 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
     store.start_run(run_id, "portfolio", period, ResearchParams(extra={"config": asdict(cfg), "universe": asdict(rule),
                     "capitals": capitals, "n_control": n_control}), now, (name, config_version(cfg)))
 
-    def simulate(capital: float, costs: CostModel | None, score_fn=lambda i: scores[i]) -> PortfolioResult:
-        return run_targets(market, cfg.construction, score_fn, cfg.schedule, capital, industry, cash_on, costs)
+    def simulate(capital: float, costs: CostModel | None, score_fn=lambda i: scores[i],
+                 sell_lag: int = SELL_LAG) -> PortfolioResult:
+        return run_targets(market, cfg.construction, score_fn, cfg.schedule, capital, industry, cash_on, costs,
+                           sell_lag)
 
     days = rebalance_days(market.dates, cfg.schedule)
     rho = rank_persistence(scores, days)
@@ -143,6 +147,8 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
                 rows += _control(simulate, capital, model, res, days, rho, market.open.shape[1], n_control)
             if (capital, cname) == DECISION:
                 decision_curve, ew_curve = res.equity, bench["equal_weight"]
+    optimistic = simulate(DECISION[0], COSTS[DECISION[1]], sell_lag=SELL_LAG_OPTIMISTIC)
+    rows += [(DECISION[0], DECISION[1], "sell_lag_2", k, v) for k, v in _metrics(optimistic, DECISION[0]).items()]
     for cname, model in (("flat", FLAT_AS_MODEL), ("v1_k1", COSTS["v1_k1"])):
         rows.append((DECISION[0], cname, "strategy", "break_even_extra_cost_per_side",
                      _break_even(simulate, DECISION[0], model, curve_metrics(equal_weight_curve(
@@ -168,8 +174,13 @@ def _metrics(res: PortfolioResult, initial: float) -> dict[str, float]:
           "costs_paid_x_initial": res.costs_paid / initial,
           "avg_names": float(res.n_names.mean()),
           "avg_cash_share": float(np.mean(res.cash / np.where(res.equity > 0, res.equity, np.nan))),
-          "max_industry_weight": res.max_industry_weight, "orders_capped": float(res.orders_capped),
-          "orders_blocked": float(res.orders_blocked), "cost_fallbacks": float(res.cost_fallbacks),
+          "max_target_industry_weight": res.max_target_industry_weight,
+          "max_actual_industry_weight": res.max_actual_industry_weight,
+          "industry_cap_breach_sessions": float(res.industry_cap_breach_sessions),
+          "industry_cap_breach_after_trades": float(res.industry_cap_breach_after_trades),
+          "orders_capped": float(res.orders_capped), "orders_blocked": float(res.orders_blocked),
+          "orders_blocked_no_adv": float(res.orders_blocked_no_adv), "orders_blocked_t2": float(res.orders_blocked_t2),
+          "cost_fallbacks": float(res.cost_fallbacks),
           "data_error_exits": float(res.data_error_exits)}
     return m
 

@@ -19,7 +19,7 @@ from quant_research.cross import cli as cross_cli
 from quant_research.daily import run_daily
 from quant_research.event_study import render_event_study, run_event_study
 from quant_research.daily_report import write_reports
-from quant_research.build import FEATURE_SET_VERSION, BuildError, build, code_hash, sql_files
+from quant_research.build import FEATURE_SET_VERSION, BuildError, build, feature_build_hash, sql_files
 from quant_research.engine import run_pattern, run_scan
 from quant_research.patterns import LIBRARY, Pattern
 from quant_research.report import render_pattern_batch, render_scan
@@ -39,7 +39,7 @@ def cmd_build(dry_run: bool) -> int:
     warehouse, research = _paths()
     if dry_run:
         print(f"Dry run. Would rebuild {research} from {warehouse} (READ_ONLY).")
-        print(f"Feature set {FEATURE_SET_VERSION}, code hash {code_hash()}; SQL steps:")
+        print(f"Feature set {FEATURE_SET_VERSION}, feature-build hash {feature_build_hash()}; SQL steps:")
         for name, _ in sql_files():
             print(f"  {name}")
         return 0
@@ -74,7 +74,7 @@ def cmd_status() -> int:
             "FROM feature_builds ORDER BY built_at DESC LIMIT 5"
         ).fetchall():
             print(f"  {row}")
-    current = code_hash()
+    current = feature_build_hash()
     print(f"Current code hash: {current}")
     return 0
 

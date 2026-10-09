@@ -12,7 +12,7 @@ import pandas as pd
 
 from quant_research import provenance
 from quant_research.factors import FACTORS, version
-from quant_research.results import code_hash
+from quant_research.results import research_code_hash
 
 LAGS = (1, 5, 20)
 RESEARCH = "f.date <= DATE '2023-12-31'"   # research period (see 01_daily_panel.sql)
@@ -91,7 +91,7 @@ def render(research_path: Path) -> tuple[str, str]:
         if not con.execute("""SELECT count(*) FROM duckdb_tables() WHERE database_name = 'rs'
                               AND table_name = 'stock_factors'""").fetchone()[0]:
             raise RuntimeError("No stock_factors in research.duckdb: run `quant build`")
-        prov = provenance.collect(con, code_hash())
+        prov = provenance.collect(con, research_code_hash())
         lines = [f"# Factor structure, factor set f1 (version {version()}), research period", "",
                  provenance.line(prov), "",
                  "Descriptive only: no forward return is used, nothing is tested or logged. Scores per date over",

@@ -87,14 +87,21 @@ class ResearchParams:
                 " AND NOT coalesce(entry_blocked, false) AND NOT coalesce(crosses_period, false)")
 
 
-def code_hash() -> str:
-    """Every .py and .sql file of the package, subpackages included (backtest/, cross/)."""
+def research_code_files(root: Path | None = None) -> list[Path]:
+    """Every .py and .sql file of the quant_research package, subpackages included (backtest/, cross/,
+    portfolio/): all the code that can change a research result."""
+    root = root or Path(str(resources.files("quant_research")))
+    return [p for p in sorted(root.rglob("*")) if p.suffix in (".py", ".sql") and "__pycache__" not in p.parts]
+
+
+def research_code_hash(root: Path | None = None) -> str:
+    """Hash of research_code_files (relative paths and bytes); stored with every run as research_runs.code_hash
+    and provenance["code_hash"]. Not the same as the feature-build hash (quant_research.build)."""
+    root = root or Path(str(resources.files("quant_research")))
     digest = hashlib.sha256()
-    root = Path(str(resources.files("quant_research")))
-    for p in sorted(root.rglob("*")):
-        if p.suffix in (".py", ".sql") and "__pycache__" not in p.parts:
-            digest.update(str(p.relative_to(root)).encode())
-            digest.update(p.read_bytes())
+    for p in research_code_files(root):
+        digest.update(str(p.relative_to(root)).encode())
+        digest.update(p.read_bytes())
     return digest.hexdigest()[:16]
 
 
@@ -142,12 +149,12 @@ class ResultsStore:
         self.con.execute(
             "INSERT INTO research_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', NULL)",
             [run_id, kind, pattern[0] if pattern else None, pattern[1] if pattern else None, period,
-             json.dumps(stored, default=str), self.feature_build_id(), code_hash(), now],
+             json.dumps(stored, default=str), self.feature_build_id(), research_code_hash(), now],
         )
 
     def provenance(self, config_json: str | None = None) -> dict:
         from quant_research.provenance import collect
-        return collect(self.con, code_hash(), config_json)
+        return collect(self.con, research_code_hash(), config_json)
 
     def log_hypothesis(self, run_id: str, label: str, period: str, p_value: float | None, now: datetime) -> None:
         self.con.execute("INSERT OR REPLACE INTO hypothesis_log VALUES (?, ?, ?, ?, ?)",

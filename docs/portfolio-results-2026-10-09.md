@@ -1,12 +1,11 @@
 # Portfolio construction grid results (research period, 2026-10-09)
 
 Plan: `docs/portfolio-construction-plan.md`.
-- Runs: `20261009T104238-portfolio-C1..C6-research`, one per configuration, each logging one test.
-- Report: `data/reports/research/portfolio-grid-20261009T104238.md`.
-- The first runs, `20261009T103304-portfolio-C1..C6-research`, are invalidated. Their random control redrew
-  scores at every rebalance, so it traded far more than the strategy. They were re-run with a
-  persistence-matched control (see "Control fix").
-  - Strategy numbers and test p-values are identical in both runs; only the control columns changed.
+- Current runs: `20261009T112302-portfolio-C1..C6-research`, one per configuration, each logging one test.
+- Report: `data/reports/research/portfolio-grid-20261009T112302.md`.
+- Earlier runs, invalidated with reasons and kept in the log:
+  - `20261009T103304-*`: random control not persistence-matched;
+  - `20261009T104238-*`: engine before the fixes from the PR #1 review (see the section below).
 
 ## Result: no configuration passes the declared reading rule
 
@@ -19,16 +18,17 @@ The reading rule, applied at 1 bn VND with cost model v1 (k = 1):
 |--------|----------------------------------|-----------|---------|--------------|--------------|--------------------|---------|
 | C1 | order_flow, weekly, 20 / 20 | +4.2% | -23.0% | -17.9% | +0.8% | 66 | no |
 | C2 | order_flow, weekly, 20 / 40 | +6.7% | -17.3% | -12.1% | +0.8% | 47 | no |
-| C3 | order_flow, monthly, 20 / 40 | +3.5% | -5.9% | -3.2% | +0.8% | 14 | no |
+| C3 | order_flow, monthly, 20 / 40 | +3.7% | -6.0% | -3.3% | +0.8% | 14 | no |
 | C4 | momentum_12_1, monthly, 20 / 20 | -8.1% | -12.7% | -11.0% | -0.4% | 8 | no |
-| C5 | momentum_12_1, monthly, 20 / 40 | -9.7% | -13.0% | -11.8% | -0.4% | 6 | no |
-| C6 | C5 + cash when direction = Bear | +0.3% | -3.1% | -2.2% | -0.4% | 5 | no |
+| C5 | momentum_12_1, monthly, 20 / 40 | -9.6% | -12.8% | -11.9% | -0.4% | 5 | no |
+| C6 | C5 + cash when direction = Bear | +0.3% | -3.6% | -2.4% | -0.4% | 5 | no |
 
 All six fail "beats equal weight" and the break-even (0 over v1 in every case).
 
 Registry: `P7-IX-momentum_12_1-direction` moves from `candidate` to `rejected`, with run C6. The transition
-cites the first C6 run (`20261009T103304`), now invalidated. The re-run `20261009T104238-portfolio-C6-research`
-has identical strategy numbers, and the rejection stands; `rejected` is a final state.
+cites the first C6 run (`20261009T103304`), now invalidated. The current run is
+`20261009T112302-portfolio-C6-research`: CAGR -3.6% instead of -3.1% after the review fixes. The rejection
+stands, and `rejected` is a final state.
 
 ## Reading
 
@@ -72,6 +72,39 @@ Reading:
   beaten). Concentrating on extreme past winners is a negative selection in this market, in the research
   period.
 - No verdict changes. Every configuration still fails "beats equal weight" and the break-even.
+
+## PR #1 review fixes (2026-10-09)
+
+The engine changed after the code review of PR #1:
+- data-error exits now pay cost model v1;
+- an invalid ADV (NaN, infinite or <= 0) blocks an order instead of removing the cap;
+- actual industry weights are measured at every close;
+- T+2 blocks are counted, with an optimistic `sell_lag = 2` sensitivity.
+
+The grid was re-run on the same pre-declared configurations. At 1 bn VND with v1:
+
+| Config | CAGR v1 (before -> after) | Max industry weight, target / actual | Closes above the 30% cap (after trades) | Orders blocked: T+2 / no ADV | CAGR with sell lag 2 |
+|--------|---------------------------|---------------------------------------|------------------------------------------|------------------------------|----------------------|
+| C1 | -23.0% -> -23.0% | 30% / 36% | 387 (87) | 84 / 3 | -23.0% |
+| C2 | -17.3% -> -17.3% | 30% / 38% | 379 (84) | 64 / 3 | -17.3% |
+| C3 | -5.9% -> -6.0% | 30% / 42% | 614 (35) | 0 / 3 | -6.0% |
+| C4 | -12.7% -> -12.7% | 30% / 44% | 630 (29) | 0 / 1 | -12.7% |
+| C5 | -13.0% -> -12.8% | 30% / 39% | 420 (28) | 0 / 1 | -12.8% |
+| C6 | -3.1% -> -3.6% | 30% / 40% | 216 (10) | 0 / 1 | -3.6% |
+
+Reading:
+- **Costs and ADV.** The cost and ADV fixes move CAGR by at most 0.5 points; no verdict changes. C6 now
+  beats 15% of the matched random runs instead of 30%.
+- **Industry cap.** The 30% cap holds for the targets, but not for the actual portfolio.
+  - Actual industry weights reach 36% to 44%.
+  - Most of the excess is price drift between rebalances (5% to 15% of closes).
+  - A smaller part comes from sales that were blocked or capped (10 to 87 trading sessions).
+  - The cap is a rebalance-time constraint, not a continuous one.
+- **T+2 is immaterial here.** Only the weekly configurations hit it, because of holiday weeks with a
+  single session (84 and 64 blocked orders). The optimistic `sell_lag = 2` gives the same CAGR.
+- **The event engine** (`backtest/engine.py`, frozen strategy and paper portfolio) still treats a missing
+  ADV as uncapped. Changing it would change the pre-registered strategy's results; this is recorded as a
+  known limitation, and `economic-results-2026-10-09.md` reports 6 fallback-priced trades.
 
 ## Caveats
 

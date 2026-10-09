@@ -14,9 +14,25 @@ from quant_research.portfolio.engine import FEE, SELL_TAX, rebalance_days, run_t
 from quant_research.portfolio.evaluate import Config, PortfolioRefused, evaluate
 from quant_research.portfolio.report import render, verdict
 from quant_research.results import ResultsStore
-from tests.backtest.test_engine import market, random_market
+from tests.backtest.test_engine import market as _market
+from tests.backtest.test_engine import random_market as _random_market
 
 NOW = datetime(2026, 10, 9, 20, 0, tzinfo=UTC)
+BIG_ADV = 1e12            # the event-engine helpers use an infinite ADV, which this engine treats as invalid
+
+
+def market(*args, **kwargs):
+    m = _market(*args, **kwargs)
+    m.adv_value[...] = BIG_ADV
+    return m
+
+
+def random_market(*args, **kwargs):
+    m = _random_market(*args, **kwargs)
+    m.adv_value[...] = BIG_ADV
+    return m
+
+
 C2 = Construction(n_names=2, entry_rank=2, exit_rank=2, min_adv_value=0, max_position_weight=1.0,
                   max_industry_weight=1.0)
 
@@ -92,7 +108,10 @@ def test_t_plus_2_floor_and_ceiling_rules():
     r2 = run_targets(m2, replace(C2, n_names=1, entry_rank=1, exit_rank=1), lambda i: np.array(plan[i]),
                      "weekly", 1000.0, no_industry(m2))
     sells = [(t[0], t[1]) for t in r2.trades if t[2] < 0]
-    assert sells == [(6, 0)] and r2.orders_blocked >= 1
+    assert sells == [(6, 0)] and r2.orders_blocked_t2 == 1
+    r3 = run_targets(m2, replace(C2, n_names=1, entry_rank=1, exit_rank=1), lambda i: np.array(plan[i]),
+                     "weekly", 1000.0, no_industry(m2), sell_lag=2)              # optimistic: sale at 3 allowed
+    assert (3, 0) in [(t[0], t[1]) for t in r3.trades if t[2] < 0] and r3.orders_blocked_t2 == 0
 
 
 def test_participation_cap_and_v1_costs():
@@ -119,7 +138,7 @@ def test_accounting_reconciles_and_is_point_in_time():
     last = {j: m.close[np.flatnonzero(np.isfinite(m.close[:, j]))[-1], j] for j in held}
     value = sum(s * last[j] for j, s in held.items() if s > 1e-9)
     assert res.equity[-1] == pytest.approx(1e6 + flows + value, rel=1e-9)
-    assert res.max_industry_weight <= 0.5 + 1e-12
+    assert res.max_target_industry_weight <= 0.5 + 1e-12
     cut = 100
     m2 = random_market(4, n=200, k=30)
     m2.close[cut + 1:] *= 1.5
@@ -190,3 +209,42 @@ def test_matched_control_trades_about_as_much_as_a_persistent_signal():
                          for s in range(5)])
     fresh = np.median([run(lambda i, s=s: np.random.default_rng([s, i]).random(120)) for s in range(5)])
     assert 0.7 < matched / strategy < 1.4 and fresh > 2 * strategy
+
+
+def test_data_error_exit_pays_the_same_costs_as_any_sale():
+    m = market(np.full((8, 1), 10.0), np.full((8, 1), 10.0))
+    m.half_spread, m.sigma = np.full((8, 1), 0.003), np.full((8, 1), 0.02)
+    m.adv_value[...] = 1e5
+    m.price_jump[3, 0] = True                                       # data error at the close of 3
+    model = CostModel(k=1.0)
+    res = run_targets(m, replace(C2, n_names=1, entry_rank=1, exit_rank=1), flat_scores([1.0]), "monthly", 1000.0,
+                      no_industry(m), costs=model)
+    exit_trade = [t for t in res.trades if t[2] < 0][0]
+    value = -exit_trade[2] * exit_trade[3]
+    assert exit_trade[0] == 3 and res.data_error_exits == 1
+    assert exit_trade[4] == pytest.approx(value * (FEE + SELL_TAX + model.side(0.003, 0.02, 1e5, value)[0]))
+    buys = sum(t[2] * t[3] + t[4] for t in res.trades if t[2] > 0)
+    assert res.equity[-1] == pytest.approx(1000.0 - buys + value - exit_trade[4])        # cash reconciles
+
+
+def test_actual_industry_weight_is_measured_after_trades_and_drift():
+    n = 12
+    close = np.full((n, 2), 10.0)
+    close[3:, 0] = 30.0                                             # industry A triples after the buy
+    m = market(close.copy(), close)
+    m.limit_down[5, 0] = True                                       # the trim at the next rebalance is blocked
+    ind = np.array([["A", "B"]] * n, dtype=object)
+    c = replace(C2, max_industry_weight=0.5)
+    res = run_targets(m, c, flat_scores([1.0, 0.5]), "weekly", 1000.0, ind)
+    assert res.max_target_industry_weight <= 0.5 + 1e-12
+    assert res.max_actual_industry_weight > 0.7                     # about 0.75 after the rise
+    assert res.industry_cap_breach_sessions >= 1 and res.industry_cap_breach_after_trades >= 1
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, 0.0])
+def test_invalid_adv_blocks_orders_instead_of_removing_the_cap(bad):
+    m = market(np.full((6, 1), 10.0), np.full((6, 1), 10.0))
+    m.adv_value[...] = bad
+    res = run_targets(m, replace(C2, n_names=1, entry_rank=1, exit_rank=1, min_adv_value=-1), flat_scores([1.0]),
+                      "weekly", 1000.0, no_industry(m))
+    assert res.trades == [] and res.orders_blocked_no_adv >= 1 and res.equity[-1] == 1000.0

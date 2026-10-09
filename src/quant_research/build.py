@@ -46,15 +46,20 @@ def sql_files() -> list[tuple[str, str]]:
     return files
 
 
-def code_hash() -> str:
+def feature_build_files() -> list[str]:
+    """The code that shapes research.duckdb (its scope is the feature build only, not the research runs)."""
+    return [f"sql/{name}" for name, _ in sql_files()] + ["build.py", "factors.py", "regimes.py", "backtest/costs.py"]
+
+
+def feature_build_hash() -> str:
+    """Hash of the feature-build code (stored as feature_builds.code_hash). Research runs store their own,
+    wider research_code_hash (quant_research.results), which covers every module of the package."""
     digest = hashlib.sha256()
     for name, text in sql_files():
         digest.update(name.encode())
         digest.update(text.encode())
-    digest.update(resources.files(SQL_PACKAGE).joinpath("build.py").read_bytes())
-    digest.update(resources.files(SQL_PACKAGE).joinpath("factors.py").read_bytes())
-    digest.update(resources.files(SQL_PACKAGE).joinpath("regimes.py").read_bytes())
-    digest.update(resources.files(SQL_PACKAGE).joinpath("backtest", "costs.py").read_bytes())
+    for rel in feature_build_files()[len(sql_files()):]:
+        digest.update(resources.files(SQL_PACKAGE).joinpath(*rel.split("/")).read_bytes())
     return digest.hexdigest()[:16]
 
 
@@ -142,7 +147,7 @@ def build(warehouse_path: Path, research_path: Path, now: datetime,
             seconds = round(time.monotonic() - started, 2)
             con.execute(
                 "INSERT OR REPLACE INTO feature_builds VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                [build_id, FEATURE_SET_VERSION, now, data_as_of, fetched, code_hash(),
+                [build_id, FEATURE_SET_VERSION, now, data_as_of, fetched, feature_build_hash(),
                  rows["daily_panel"], rows["stock_features"], rows["stock_targets"], seconds, before],
             )
             con.commit()
@@ -161,4 +166,4 @@ def build(warehouse_path: Path, research_path: Path, now: datetime,
 
     if file_hash(warehouse_path) != before:
         raise BuildError("Warehouse file changed during the build; this must never happen")
-    return BuildResult(build_id, data_as_of, code_hash(), rows, seconds)
+    return BuildResult(build_id, data_as_of, feature_build_hash(), rows, seconds)

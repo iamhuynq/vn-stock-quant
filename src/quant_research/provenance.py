@@ -30,7 +30,7 @@ def config_hash(config_json: str) -> str:
     return hashlib.sha256(config_json.encode()).hexdigest()[:16]
 
 
-def collect(con, code_hash: str, config_json: str | None = None) -> dict:
+def collect(con, research_code_hash: str, config_json: str | None = None) -> dict:
     """Provenance dict; `con` has research.duckdb attached as `rs` (warehouse hash from the latest build)."""
     sha, dirty = git_info()
     build_id = warehouse_sha = None
@@ -43,7 +43,7 @@ def collect(con, code_hash: str, config_json: str | None = None) -> dict:
         row = con.execute("SELECT build_id FROM rs.feature_builds ORDER BY built_at DESC LIMIT 1").fetchone()
         build_id = row[0] if row else None
     out = {"git_sha": sha, "git_dirty": dirty, "warehouse_sha": warehouse_sha, "feature_build_id": build_id,
-           "code_hash": code_hash}
+           "code_hash": research_code_hash}      # key kept for older runs: it is the research_code_hash
     if config_json is not None:
         out["config_hash"] = config_hash(config_json)
     return out

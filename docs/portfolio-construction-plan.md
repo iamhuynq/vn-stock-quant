@@ -178,3 +178,27 @@ Built as planned; open questions answered with the defaults. Full suite: 300 pas
     momentum is worse than random (C4 10%, C5 0%).
   - Four new tests: the target persistence is reproduced, determinism, and control turnover matching a
     persistent signal (unlike the old control).
+
+### PR #1 review fixes (2026-10-09, approved)
+
+Code review: request changes. Every finding was confirmed in the code and fixed.
+
+| Finding | Fix | Effect on the grid |
+|---------|-----|--------------------|
+| Data-error exits skipped spread / impact | Same costs as any sale (inputs of the previous close) | 1 to 3 exits per run |
+| `max_industry_weight` measured targets | Renamed `max_target_industry_weight`. Added `max_actual_industry_weight` (market value at every close) and closes above the cap, of which after trades | Actual 36% to 44% against a 30% cap |
+| Invalid ADV gave an infinite order cap | Blocked and counted (`orders_blocked_no_adv`) | 1 to 3 blocked orders |
+| T+2 assumption implicit | Documented as a backtest assumption. `sell_lag` parameter (3 by default) and the `orders_blocked_t2` counter; `sell_lag = 2` sensitivity reported | 84 / 64 blocks (weekly only); CAGR unchanged |
+| Two functions named `code_hash` | `feature_build_hash()` (feature-build scope) and `research_code_hash()` (every module, stored with each run). DB columns and the provenance key are unchanged | None |
+
+Other changes:
+- CI: `.github/workflows/tests.yml` runs `uv sync --locked` and `uv run pytest -q` on pushes to main and
+  on pull requests.
+- New tests:
+  - data-error exit costs and cash reconciliation;
+  - actual industry weight with drift and a blocked trim;
+  - invalid ADV (NaN, infinite, 0);
+  - T+2 counter and `sell_lag = 2`;
+  - hash scope (portfolio and backtest modules change the research hash).
+- Full suite: 320 passed.
+- Grid re-run: `20261009T112302-portfolio-C*-research`; backup `data/results.before-portfolio-v3.duckdb`.

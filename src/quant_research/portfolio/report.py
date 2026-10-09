@@ -64,7 +64,19 @@ def render(store: ResultsStore, run_ids: dict[str, str]) -> str:
                      f"{_num(get((c, 'v1_k1', 'strategy', 'break_even_extra_cost_per_side')), '.3%')} | "
                      f"{_num(get((c, 'v1_k1', 'test', 'excess_vs_equal_weight_p')), '.3g')} / {_num(q.get(run_id), '.3g')} | "
                      f"{'**yes**' if ok else 'no'} |")
+        d = (c, "v1_k1", "strategy")
         details += ["", f"## {name} ({run_id})", "", "; ".join(checks), "",
+                    f"At {c / 1e9:g} bn VND, v1: max industry weight target "
+                    f"{_num(get((*d[:2], 'strategy', 'max_target_industry_weight')), '.0%')}, actual "
+                    f"{_num(get((*d[:2], 'strategy', 'max_actual_industry_weight')), '.0%')}; closes above the cap "
+                    f"{_num(get((*d[:2], 'strategy', 'industry_cap_breach_sessions')), '.0f')} (after trades "
+                    f"{_num(get((*d[:2], 'strategy', 'industry_cap_breach_after_trades')), '.0f')}); orders blocked "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked')), '.0f')} (T+2 "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked_t2')), '.0f')}, no ADV "
+                    f"{_num(get((*d[:2], 'strategy', 'orders_blocked_no_adv')), '.0f')}); data-error exits "
+                    f"{_num(get((*d[:2], 'strategy', 'data_error_exits')), '.0f')}. Sensitivity sell lag 2 (optimistic "
+                    f"T+2): CAGR {_pct(get((*d[:2], 'sell_lag_2', 'cagr')))} vs {_pct(get((*d[:2], 'strategy', 'cagr')))}.",
+                    "",
                     "| Capital (bn VND) | Costs | CAGR | Sharpe | Max DD | Turnover / yr | Costs paid (x initial) | "
                     "Avg names | vs equal weight | vs VNINDEX | Matched random median CAGR |",
                     "|---|---|---|---|---|---|---|---|---|---|---|"]

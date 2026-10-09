@@ -52,3 +52,23 @@ def test_line_flags_uncommitted_code():
          "code_hash": "c" * 16}
     text = line(p)
     assert "aaaaaaaaaa" in text and "uncommitted" in text and "bbbbbbbbbbbb" in text
+
+
+def test_research_code_hash_covers_every_module_that_shapes_a_result(tmp_path):
+    import shutil
+    from importlib import resources
+    from pathlib import Path
+
+    from quant_research.build import feature_build_files
+    from quant_research.results import research_code_files, research_code_hash
+    root = Path(str(resources.files("quant_research")))
+    rel = {str(p.relative_to(root)) for p in research_code_files()}
+    assert {"portfolio/engine.py", "portfolio/evaluate.py", "backtest/engine.py", "backtest/costs.py", "econ.py",
+            "interactions.py", "registry.py", "sql/03_stock_features.sql"} <= rel
+    assert set(feature_build_files()) <= rel                       # the feature-build scope is a subset
+    copy = tmp_path / "quant_research"
+    shutil.copytree(root, copy, ignore=shutil.ignore_patterns("__pycache__"))
+    before = research_code_hash(copy)
+    assert before == research_code_hash()                          # same files, same hash
+    (copy / "portfolio" / "engine.py").write_text((copy / "portfolio" / "engine.py").read_text() + "\n# change\n")
+    assert research_code_hash(copy) != before
