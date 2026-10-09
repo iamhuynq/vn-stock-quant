@@ -64,6 +64,9 @@ Registry). Summary:
 - Branch `research-platform`, pull request #1 into `main`.
   - Commit `a74ac2f` was reviewed with "request changes". The fixes are a second commit (see "PR #1 review
     fixes" in `portfolio-construction-plan.md`).
+  - CI on PR #1 failed on Linux: `scripts/daily.sh` used BSD-only `date -j -v` and `stat -f`. They were
+    replaced by Python helpers; a test now rejects BSD-only flags. Reproduced and verified with GNU-like
+    `date`/`stat` shims, not on a real Linux runner. Third commit.
   - The user pushes and merges.
   `CLAUDE.md` stays local: it is ignored by the user's global gitignore.
 - Whitelist tightened (2026-10-09). Tickers are upper-case letters and digits with at most one upper-case
