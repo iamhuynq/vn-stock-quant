@@ -113,3 +113,23 @@ def test_tercile_spread_matches_a_direct_computation():
     assert spread.tolist() == [pytest.approx(np.mean([4.0, 5.0]) - np.mean(range(6)))]
     spread, _ = _tercile_spread(dates, codes, ret, outcomes, 21, "bottom")
     assert spread.tolist() == [pytest.approx(np.mean([0.0, 1.0]) - np.mean(range(6)))]
+
+
+def test_v2_group_returns_are_compounded_and_v1_is_unchanged(planted, tmp_path):
+    """v1 (sums, recorded results) stays as it was; v2 columns and v2 runs use compounded returns."""
+    from quant_research.cross.group_tests import _past, run_group_momentum
+    from quant_research.cross.hypotheses import _record
+    dates = np.arange(np.datetime64("2024-01-01"), np.datetime64("2024-01-31"))
+    ret = np.full((len(dates), 2), 0.01)
+    ret[25, 1] = np.nan                                                     # one missing day in the window: skipped
+    v1, v2 = _past(dates, ret, dates[-1], 21), _past(dates, ret, dates[-1], 21, compound=True)
+    assert v1 == pytest.approx([0.21, 0.20]) and v2 == pytest.approx([1.01 ** 21 - 1, 1.01 ** 20 - 1])
+    rows = q(planted / "c.duckdb", """SELECT grp_ret_21, grp_ret_21_c, own_ret_21, own_ret_21_c FROM group_features
+                                      WHERE grp_ret_21 IS NOT NULL""")
+    assert rows and all(abs(c - s) < max(0.05, 0.2 * abs(s)) for s, c, _, _ in rows)   # close, but not identical
+    assert any(abs(c - s) > 1e-9 for s, c, _, _ in rows)
+    with ResultsStore(tmp_path / "results.duckdb", planted / "r.duckdb") as store:
+        attach(store, planted / "c.duckdb")
+        run_v2 = run_group_momentum(store, "research", RESEARCH, NOW, _record, definition="v2")
+        version = store.con.execute("SELECT pattern_name, pattern_version, status FROM research_runs").fetchone()
+    assert "group_momentum_v2" in run_v2 and version == ("group_momentum_v2", "v2", "ok")

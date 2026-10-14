@@ -170,6 +170,7 @@ def evaluate(store: ResultsStore, name: str, now: datetime, period: str = "resea
     store.con.executemany("INSERT INTO portfolio_results VALUES (?, ?, ?, ?, ?, ?, ?)",
                           [(run_id, name, c, cm, s, k, None if v is None or not np.isfinite(v) else float(v))
                            for c, cm, s, k, v in rows])
+    store.finish_run(run_id)
     return run_id
 
 

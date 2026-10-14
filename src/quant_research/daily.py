@@ -59,6 +59,7 @@ class DailyResult:
     scanned: list[date]
     incomplete: list[tuple[date, float]]
     paper_sessions: int
+    paper_date: date | None = None       # latest complete session: the paper portfolio never uses a partial one
 
 
 def coverage(con: duckdb.DuckDBPyConnection, d: date) -> float:
@@ -165,5 +166,10 @@ def run_daily(store: ResultsStore, now: datetime, rescan: date | None = None,
     for d in sessions_to_scan(store.con, final, rescan):
         status, cov, _ = scan_date(store, d, now, rule=rule, library=library)
         (scanned.append(d) if status == "scanned" else incomplete.append((d, cov)))
-    sessions = run_paper(store, latest, rule=rule, n_random=n_random) if latest else 0
-    return DailyResult(latest, scanned, incomplete, sessions)
+    # Completeness gate for the paper portfolio too: re-simulate up to the latest session the scan accepted
+    # (status 'scanned'), never through a partially downloaded one; it catches up once that session is complete.
+    paper_date = store.con.execute("""SELECT max(scan_date) FROM daily_scans
+                                      WHERE status = 'scanned' AND scan_date <= ?""", [latest]).fetchone()[0] \
+        if latest else None
+    sessions = run_paper(store, paper_date, rule=rule, n_random=n_random) if paper_date else 0
+    return DailyResult(latest, scanned, incomplete, sessions, paper_date)

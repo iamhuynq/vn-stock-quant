@@ -1,6 +1,7 @@
 """results.duckdb: persistent store of research runs, statistics and the hypothesis log.
 
-Never rebuilt. Runs are invalidated, not deleted, so the multiple-testing log stays complete.
+Never rebuilt. Runs are invalidated, not deleted, so the multiple-testing log stays complete. Run status:
+running (started) -> ok (finished) or failed (raised); invalid is set by hand with a reason.
 The research database is attached READ_ONLY as `rs`.
 """
 
@@ -127,16 +128,26 @@ class ResultsStore:
             raise
         self.con.execute(f"ATTACH '{research_path.as_posix().replace(chr(39), chr(39) * 2)}' AS rs (READ_ONLY)")
         self._universe_cache: dict[tuple, tuple] = {}
+        self._open_runs: set[str] = set()
 
     def close(self) -> None:
+        self._fail_open_runs("not finished: the store closed before finish_run")
         self.con.execute("DETACH rs")
         self.con.close()
 
     def __enter__(self) -> "ResultsStore":
         return self
 
-    def __exit__(self, *_exc: object) -> None:
+    def __exit__(self, exc_type, exc, _tb) -> None:
+        if exc_type is not None:
+            self._fail_open_runs(f"{exc_type.__name__}: {exc}"[:500])
         self.close()
+
+    def _fail_open_runs(self, reason: str) -> None:
+        for run_id in sorted(self._open_runs):
+            self.con.execute("UPDATE research_runs SET status = 'failed', invalid_reason = ? WHERE run_id = ?",
+                             [reason, run_id])
+        self._open_runs.clear()
 
     def feature_build_id(self) -> str | None:
         row = self.con.execute("SELECT build_id FROM rs.feature_builds ORDER BY built_at DESC LIMIT 1").fetchone()
@@ -147,10 +158,18 @@ class ResultsStore:
         config = json.dumps(asdict(params), default=str, sort_keys=True)
         stored = {**asdict(params), "provenance": self.provenance(config)}
         self.con.execute(
-            "INSERT INTO research_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ok', NULL)",
+            "INSERT INTO research_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', NULL)",
             [run_id, kind, pattern[0] if pattern else None, pattern[1] if pattern else None, period,
              json.dumps(stored, default=str), self.feature_build_id(), research_code_hash(), now],
         )
+        self._open_runs.add(run_id)
+
+    def finish_run(self, run_id: str) -> None:
+        """running -> ok, once every result and hypothesis row of the run is written. A run that raises is set to
+        failed when the store exits; a process killed mid-run leaves `running`. Only `ok` runs count anywhere
+        (q-values, duplicate guards, reports)."""
+        self.con.execute("UPDATE research_runs SET status = 'ok' WHERE run_id = ? AND status = 'running'", [run_id])
+        self._open_runs.discard(run_id)
 
     def provenance(self, config_json: str | None = None) -> dict:
         from quant_research.provenance import collect

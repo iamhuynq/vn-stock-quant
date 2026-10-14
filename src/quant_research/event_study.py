@@ -103,6 +103,7 @@ def run_event_study(store: ResultsStore, now: datetime, params: ResearchParams =
         store.con.register("frame", frame)
         store.con.execute(f"INSERT INTO event_study_stats SELECT {', '.join(frame.columns)} FROM frame")
         store.con.unregister("frame")
+    store.finish_run(run_id)
     return run_id
 
 

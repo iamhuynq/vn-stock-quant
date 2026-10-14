@@ -110,7 +110,8 @@ def run_targets(market: Market, c: Construction, scores: Scores, schedule: str, 
         marks = last_price if writedown_after is None else np.where(i - last_trade > writedown_after, 0.0, last_price)
         held_value = float(np.nansum(shares * marks))
         if held_value > 0:
-            stale = float(np.nansum(np.where(i - last_trade > STALE_SESSIONS, shares * last_price, 0.0))) / held_value
+            # same marks in numerator and denominator (a written-down position counts 0 in both)
+            stale = float(np.nansum(np.where(i - last_trade > STALE_SESSIONS, shares * marks, 0.0))) / held_value
             res.stale_value_share_max = max(res.stale_value_share_max, stale)
             stale_sum, held_sessions = stale_sum + stale, held_sessions + 1
         res.equity[i], res.cash[i], res.n_names[i] = cash + held_value, cash, int((shares > 0).sum())

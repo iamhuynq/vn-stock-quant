@@ -89,6 +89,7 @@ def run_pattern(store: ResultsStore, pattern: Pattern, period: str, params: Rese
 
     if pattern.base:
         _compare_with_base(store, run_id, pattern, library[pattern.base], ev, period, params, now, table)
+    store.finish_run(run_id)
     return run_id
 
 
@@ -154,24 +155,28 @@ def run_scan(store: ResultsStore, period: str, params: ResearchParams, now: date
             y = outcome_column(h)
             for seg, cond in segments.items():
                 part = "date, exchange_now" if seg.startswith("exchange=") else "date"
-                base = f"""SELECT {part}, {feature} AS f, {y} AS y FROM scan_universe
+                base = f"""SELECT {part}, symbol, {feature} AS f, {y} AS y FROM scan_universe
                            WHERE {cond} AND {feature} IS NOT NULL AND isfinite({feature}) AND {y} IS NOT NULL"""
                 dec = con.execute(f"""
                     WITH b AS ({base}),
-                    d AS (SELECT *, ntile(10) OVER (PARTITION BY {part} ORDER BY f) AS decile,
+                    d AS (SELECT *, ntile(10) OVER (PARTITION BY {part} ORDER BY f, symbol) AS decile,   -- ties: by symbol
                                  count(*) OVER (PARTITION BY {part}) AS n_day FROM b)
                     SELECT date, decile, avg(y) AS m, count(*) AS n FROM d
                     WHERE n_day >= {params.min_stocks_per_date} GROUP BY date, decile ORDER BY date, decile
                 """).fetchnumpy()
                 ic = con.execute(f"""
                     WITH b AS ({base}),
-                    r AS (SELECT date, rank() OVER (PARTITION BY {part} ORDER BY f) AS rf,
-                                 rank() OVER (PARTITION BY {part} ORDER BY y) AS ry,
+                    r AS (SELECT date,                       -- average ranks: exact Spearman with ties
+                                 rank() OVER (PARTITION BY {part} ORDER BY f)
+                                     + (count(*) OVER (PARTITION BY {part}, f) - 1) / 2.0 AS rf,
+                                 rank() OVER (PARTITION BY {part} ORDER BY y)
+                                     + (count(*) OVER (PARTITION BY {part}, y) - 1) / 2.0 AS ry,
                                  count(*) OVER (PARTITION BY {part}) AS n_day FROM b)
                     SELECT date, corr(rf, ry) AS ic FROM r WHERE n_day >= {params.min_stocks_per_date}
                     GROUP BY date HAVING corr(rf, ry) IS NOT NULL AND isfinite(corr(rf, ry)) ORDER BY date
                 """).fetchnumpy()
                 _store_scan(store, run_id, feature, f"exec_excess_{h}d", seg, h, dec, ic, period, now)
+    store.finish_run(run_id)
     return run_id
 
 

@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-10-09. Update this file at the end of every task.
+Last updated: 2026-10-14. Update this file at the end of every task.
 
 ## Data
 
@@ -90,6 +90,14 @@ Registry). Summary:
   - Branch `execution-audit`, PR #2. Its review asked for three fixes: NULL validation, the worse
     valuation in the verdict, and `last_trade` in legacy mode. They are a new commit, and the grid was
     re-run with no verdict change. The user pushes and merges.
+- Review of 2026-10-10 (plan `review-2026-10-10-fixes-plan.md`, branch `review-2026-10-10-fixes`, not
+  pushed):
+  - run lifecycle running / ok / failed;
+  - the paper portfolio only uses complete sessions;
+  - exact Spearman and tie-break in the decile scan (research scan re-run; no logged test crosses 0.05);
+  - consistent stale share;
+  - compounded v2 group returns (v1 records unchanged).
+
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

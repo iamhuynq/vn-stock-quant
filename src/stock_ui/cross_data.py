@@ -128,15 +128,15 @@ def industry_pair_rolling(reader: Reader, a: str, b: str, as_of: date) -> ReadRe
 
 
 def industry_momentum(reader: Reader, as_of: date) -> ReadResult:
-    """Excess return of each industry index over the last 5, 21 and 63 sessions up to as_of."""
+    """Compounded excess return of each industry index over the last 5, 21 and 63 sessions up to as_of."""
     return reader.query("cross", """
         WITH d AS (SELECT date, row_number() OVER (ORDER BY date DESC) AS k
                    FROM (SELECT DISTINCT date FROM group_returns_daily WHERE level = 'l2' AND date <= ?)),
         n AS (SELECT group_code, any_value(name) AS name FROM group_names WHERE level = 'l2' GROUP BY 1)
         SELECT n.name AS industry, max(d.date) AS as_of,
-               sum(g.ew_cc) FILTER (WHERE d.k <= 5) AS ret_5d,
-               sum(g.ew_cc) FILTER (WHERE d.k <= 21) AS ret_21d,
-               sum(g.ew_cc) FILTER (WHERE d.k <= 63) AS ret_63d,
+               exp(sum(ln(1 + g.ew_cc)) FILTER (WHERE d.k <= 5)) - 1 AS ret_5d,       -- compounded
+               exp(sum(ln(1 + g.ew_cc)) FILTER (WHERE d.k <= 21)) - 1 AS ret_21d,
+               exp(sum(ln(1 + g.ew_cc)) FILTER (WHERE d.k <= 63)) - 1 AS ret_63d,
                any_value(g.n_members) FILTER (WHERE d.k = 1) AS members
         FROM group_returns_daily g JOIN d USING (date) JOIN n USING (group_code)
         WHERE g.level = 'l2' AND d.k <= 63 GROUP BY 1 HAVING count(g.ew_cc) FILTER (WHERE d.k <= 21) >= 17

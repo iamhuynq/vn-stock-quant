@@ -95,6 +95,7 @@ def evaluate(store: ResultsStore, label: str, strategy: Strategy, period: str, n
     store.con.executemany("INSERT INTO economic_results VALUES (?, ?, ?, ?, ?, ?)",
                           [(a, b, c, d, e, None if f is None or not np.isfinite(f) else float(f))
                            for a, b, c, d, e, f in rows])
+    store.finish_run(run_id)
     return run_id
 
 

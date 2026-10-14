@@ -109,3 +109,22 @@ def test_writedown_values_stocks_that_stop_trading_at_zero():
     p_keep = run_targets(m, c, lambda i: np.array([1.0]), "monthly", 1000.0, no_industry(m))
     p_cut = run_targets(m, c, lambda i: np.array([1.0]), "monthly", 1000.0, no_industry(m), writedown_after=10)
     assert p_keep.equity[-1] > p_cut.equity[-1] == pytest.approx(p_cut.cash[-1])
+
+
+@pytest.mark.parametrize("writedown", [None, 3, 8])
+def test_stale_share_is_a_valid_fraction_with_a_writedown(writedown):
+    """Numerator and denominator use the same (written-down) marks: the share stays in [0, 1]; a session with
+    nothing marked is skipped (no division by zero)."""
+    for seed in range(6):
+        m = edge_market(seed)
+        m.traded[40:, ::2] = False                                          # half the stocks stop trading
+        s = Strategy(hold_sessions=5, max_positions=6, renew=True, initial_equity=1e6)
+        e = run(m, s, writedown_after=writedown)
+        assert 0.0 <= e.stale_value_share_mean <= e.stale_value_share_max <= 1.0
+        c = Construction(n_names=5, entry_rank=5, exit_rank=10, min_adv_value=0)
+        sc = np.random.default_rng(seed).random(m.open.shape)
+        r = run_targets(m, c, lambda i: sc[i], "weekly", 1e6, np.full(m.open.shape, None, dtype=object),
+                        writedown_after=writedown)
+        assert 0.0 <= r.stale_value_share_mean <= r.stale_value_share_max <= 1.0
+        if writedown is None:
+            assert e.stale_value_share_max > 0 or r.stale_value_share_max > 0  # stale marks do occur here

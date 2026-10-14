@@ -46,26 +46,31 @@ GROUP BY 1, 2, 3;
 
 # Laggard features: the stock's industry (level 2) 1-month index return and its tercile among industries
 # that day, and whether the stock's own 1-month excess return is in the bottom half of its industry.
+# Definition v1 (grp_ret_21, own_ret_21, the tercile and the bottom-half flag; used by the recorded G4 pattern):
+# sums of daily excess returns. v2 columns *_c: compounded, exp(sum(ln(1 + r))) - 1, for new tests only.
 GROUP_FEATURES_SQL = """
 CREATE TABLE group_features AS
 WITH g AS (
     SELECT date, group_code,
-           CASE WHEN count(ew_cc) OVER w >= {min_obs} THEN sum(ew_cc) OVER w END AS grp_ret_21
+           CASE WHEN count(ew_cc) OVER w >= {min_obs} THEN sum(ew_cc) OVER w END AS grp_ret_21,
+           CASE WHEN count(ew_cc) OVER w >= {min_obs} THEN exp(sum(ln(1 + ew_cc)) OVER w) - 1 END AS grp_ret_21_c
     FROM group_returns_daily WHERE level = 'l2'
     WINDOW w AS (PARTITION BY group_code ORDER BY date ROWS BETWEEN {lookback_m1} PRECEDING AND CURRENT ROW)),
 gt AS (SELECT *, ntile(3) OVER (PARTITION BY date ORDER BY grp_ret_21) AS grp_tercile
        FROM g WHERE grp_ret_21 IS NOT NULL),
 s AS (
     SELECT d.symbol, d.date,
-           CASE WHEN count(d.ex_cc) OVER w >= {min_obs} THEN sum(d.ex_cc) OVER w END AS own_ret_21
+           CASE WHEN count(d.ex_cc) OVER w >= {min_obs} THEN sum(d.ex_cc) OVER w END AS own_ret_21,
+           CASE WHEN count(d.ex_cc) OVER w >= {min_obs} THEN exp(sum(ln(1 + d.ex_cc)) OVER w) - 1 END AS own_ret_21_c
     FROM returns_daily d
     WINDOW w AS (PARTITION BY d.symbol ORDER BY d.date ROWS BETWEEN {lookback_m1} PRECEDING AND CURRENT ROW)),
 m AS (SELECT s.*, mm.month_end FROM s ASOF JOIN month_ends mm ON s.date > mm.month_end),
-j AS (SELECT m.symbol, m.date, gm.group_code, m.own_ret_21, gt.grp_ret_21, gt.grp_tercile
+j AS (SELECT m.symbol, m.date, gm.group_code, m.own_ret_21, gt.grp_ret_21, gt.grp_tercile, m.own_ret_21_c,
+             gt.grp_ret_21_c
       FROM m JOIN group_members_monthly gm ON gm.symbol = m.symbol AND gm.month_end = m.month_end AND gm.level = 'l2'
       JOIN gt ON gt.date = m.date AND gt.group_code = gm.group_code
       WHERE m.own_ret_21 IS NOT NULL)
-SELECT symbol, date, group_code, own_ret_21, grp_ret_21, grp_tercile,
+SELECT symbol, date, group_code, own_ret_21, grp_ret_21, grp_tercile, own_ret_21_c, grp_ret_21_c,
        percent_rank() OVER (PARTITION BY date, group_code ORDER BY own_ret_21) < 0.5 AS own_bottom_half
 FROM j
 """

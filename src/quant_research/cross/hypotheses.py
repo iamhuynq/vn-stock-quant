@@ -116,6 +116,7 @@ def run_leadlag_persistence(store: ResultsStore, period: str, params: ResearchPa
                       "top_mean": [round(r[2], 5) for r in rows], "pairs": [r[3] for r in rows]}
             _record(store, run_id, f"{prefix}leadlag_persist_{series}", f"lag{lag}", len(d),
                     float(d.mean()) if len(d) else None, se, t, p, period, now, detail)
+    store.finish_run(run_id)
     return run_id
 
 
@@ -161,6 +162,7 @@ def run_h2_large_to_small(store: ResultsStore, period: str, params: ResearchPara
             detail = {"market_coef": float(beta[2]), "market_t": float(beta[2] / ses[2]) if ses[2] else None,
                       "mean_small_basket": float(arr[:, 2].mean())}
         _record(store, run_id, "h2_slope", f"exec_excess_{h}d", len(arr), est, se, t, p, period, now, detail)
+    store.finish_run(run_id)
     return run_id
 
 

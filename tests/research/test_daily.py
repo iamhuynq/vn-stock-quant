@@ -152,3 +152,21 @@ def test_catch_up_run_writes_one_report_per_scanned_session(tmp_path):
     latest = paths[-1].read_text()
     assert "Catch-up report" not in latest and "## Forward scoreboard" in latest
     assert first == on_time
+
+
+def test_paper_portfolio_never_uses_an_incomplete_session(tmp_path):
+    """The scan rejects a partial session; the paper portfolio must stop at the previous complete one."""
+    from quant_research.daily_report import render_daily
+    rs = make(tmp_path, drop_last_for="STK")
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        dates = [d for (d,) in store.con.execute("SELECT DISTINCT run_date FROM paper_daily").fetchall()]
+        last_day = store.con.execute("SELECT max(date) FROM paper_daily").fetchone()[0]
+        report = render_daily(store, r, NOW)
+    assert r.paper_date == FORWARD_DAYS[-2] and dates == [FORWARD_DAYS[-2]] and last_day == FORWARD_DAYS[-2]
+    assert "latest complete session" in report
+    rs = make(tmp_path)                                               # complete now: the paper portfolio catches up
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        last_day = store.con.execute("SELECT max(date) FROM paper_daily WHERE run_date = ?", [r.paper_date]).fetchone()[0]
+    assert r.paper_date == FORWARD_DAYS[-1] and last_day == FORWARD_DAYS[-1]
