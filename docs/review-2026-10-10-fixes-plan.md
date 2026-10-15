@@ -166,3 +166,14 @@ single changed threshold.
 
 Two 80% rules exist in the code: `int(0.8 * n)` in legacy definitions, and `>= 0.8 * n` (equivalent to
 rounding up) in `group_tests._past`. New code uses `min_valid`.
+
+## PR #3 latest re-review (2026-10-15)
+
+P3: `current_paper_date` treated an existing but empty `paper_state` table as "no current paper record". This
+can happen when `run_daily` creates the table at its start and fails before writing the row. The function now
+distinguishes three states:
+- a state row, including an explicit NULL: it is used as is;
+- no state row (no table, or an empty table): the latest `run_date`, as before `paper_state` existed;
+- no paper table: None.
+
+A test covers each state and fails on the previous commit. Full suite: 392 passed.

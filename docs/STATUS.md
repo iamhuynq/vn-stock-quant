@@ -114,6 +114,8 @@ Registry). Summary:
     rounding down;
   - `paper_state` is NULL when no paper record was simulated.
 
+  Fifth commit: a missing `paper_state` row falls back to the latest run; an explicit NULL is kept.
+
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).
