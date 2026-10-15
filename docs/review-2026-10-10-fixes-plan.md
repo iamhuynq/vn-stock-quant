@@ -114,3 +114,22 @@ mutation-checked: each fails on the old code.
    - v1 is unchanged for every recorded result (P4b-G2 FAIL, G1, G3, G4).
    - The Market watch "industry strength" table now shows compounded returns.
    - The v2 columns appear in `cross.duckdb` at the next `quant cross build`.
+
+## PR #3 review fixes (2026-10-15, approved)
+
+Code review of PR #3: two P2 findings and one P3, all confirmed and fixed. Full suite: 386 passed. Each new
+test was mutation-checked against the previous commit.
+
+| Finding | Fix |
+|---------|-----|
+| P2: the v2 group return compounded daily **excess** returns (stock return minus market return). That is a daily-rebalanced long-group / short-market index, not the cumulative relative return, and `ln(1 + r)` was unguarded | v2 is now defined as the **cumulative relative return versus the market**: prod(1 + group) / prod(1 + market) - 1 = exp(sum(log_rel)) - 1. `group_returns_daily` gains `ew_raw`, `mkt_cc` (= raw - excess, by construction), `log_rel` and `rel_invalid`. Missing sessions are skipped in both products, with the same minimum count (16 of 21). A return <= -1 makes the window NULL. Columns `grp_rel_21` / `own_rel_21` replace the earlier `*_c` (never built or used). The Market watch industry table uses v2 when the cross build has it, else v1 (sums) |
+| P2: the paper portfolio could cross an incomplete session between two complete ones | It now stops at the end of the **unbroken** run of complete forward sessions, before the first forward session that is not `scanned`, even if a later one is. A scanned session is re-scanned only by `quant daily --date`; the paper record is rebuilt from the forward start on every run |
+| P3: `finish_run` did not check the transition | It raises unless exactly one run moves from `running` to `ok` (missing run, or a run already `ok` / `invalid` / `failed`). `quant runs` lists runs left `running` by a killed process; recovery is `quant runs --invalidate RUN --reason "process killed"`, then run again |
+
+Tests:
+- v2 equals a hand calculation; it differs from compounded excess returns; an invalid day empties the
+  window; the SQL `grp_rel_21` equals a pandas product ratio; v1 is unchanged.
+- complete -> incomplete -> complete: the paper portfolio stops before the incomplete session.
+- `finish_run` on a missing, finished or invalidated run; stuck-run listing.
+
+No research result is re-run: v2 was never used in a recorded result. Real data: no run is `running`.

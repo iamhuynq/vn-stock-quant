@@ -166,10 +166,16 @@ def run_daily(store: ResultsStore, now: datetime, rescan: date | None = None,
     for d in sessions_to_scan(store.con, final, rescan):
         status, cov, _ = scan_date(store, d, now, rule=rule, library=library)
         (scanned.append(d) if status == "scanned" else incomplete.append((d, cov)))
-    # Completeness gate for the paper portfolio too: re-simulate up to the latest session the scan accepted
-    # (status 'scanned'), never through a partially downloaded one; it catches up once that session is complete.
-    paper_date = store.con.execute("""SELECT max(scan_date) FROM daily_scans
-                                      WHERE status = 'scanned' AND scan_date <= ?""", [latest]).fetchone()[0] \
-        if latest else None
+    # Completeness gate for the paper portfolio too: it is re-simulated from FORWARD_START, so it may only run up
+    # to the end of the unbroken run of complete (status 'scanned') forward sessions. It stops before the first
+    # forward session that is not complete, even if a later one is, and catches up once that session is complete.
+    # A scanned session is only re-scanned by `quant daily --date`; the paper record is rebuilt on every run.
+    paper_date = store.con.execute("""
+        WITH f AS (SELECT date FROM rs.market_daily WHERE date >= ? AND date <= ?),
+        gap AS (SELECT min(date) AS d FROM f
+                WHERE date NOT IN (SELECT scan_date FROM daily_scans WHERE status = 'scanned'))
+        SELECT max(s.scan_date) FROM daily_scans s, gap
+        WHERE s.status = 'scanned' AND s.scan_date <= ? AND (gap.d IS NULL OR s.scan_date < gap.d)""",
+        [FORWARD_START, latest, latest]).fetchone()[0] if latest else None
     sessions = run_paper(store, paper_date, rule=rule, n_random=n_random) if paper_date else 0
     return DailyResult(latest, scanned, incomplete, sessions, paper_date)

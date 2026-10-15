@@ -127,17 +127,25 @@ def industry_pair_rolling(reader: Reader, a: str, b: str, as_of: date) -> ReadRe
     return reader.read("cross", ("industry_pair", a, b, as_of), lambda con: _industry_pair(con, a, b, as_of))
 
 
-def industry_momentum(reader: Reader, as_of: date) -> ReadResult:
-    """Compounded excess return of each industry index over the last 5, 21 and 63 sessions up to as_of."""
-    return reader.query("cross", """
+def _industry_momentum(con: duckdb.DuckDBPyConnection, as_of: date) -> pd.DataFrame:
+    has_rel = con.execute("""SELECT count(*) FROM duckdb_columns() WHERE table_name = 'group_returns_daily'
+                             AND column_name = 'log_rel'""").fetchone()[0]
+    # v2: cumulative relative return versus the market, exp(sum(log_rel)) - 1; older cross builds: sum (v1)
+    agg = (lambda k: f"exp(sum(g.log_rel) FILTER (WHERE d.k <= {k})) - 1") if has_rel else \
+          (lambda k: f"sum(g.ew_cc) FILTER (WHERE d.k <= {k})")
+    return con.execute(f"""
         WITH d AS (SELECT date, row_number() OVER (ORDER BY date DESC) AS k
                    FROM (SELECT DISTINCT date FROM group_returns_daily WHERE level = 'l2' AND date <= ?)),
         n AS (SELECT group_code, any_value(name) AS name FROM group_names WHERE level = 'l2' GROUP BY 1)
         SELECT n.name AS industry, max(d.date) AS as_of,
-               exp(sum(ln(1 + g.ew_cc)) FILTER (WHERE d.k <= 5)) - 1 AS ret_5d,       -- compounded
-               exp(sum(ln(1 + g.ew_cc)) FILTER (WHERE d.k <= 21)) - 1 AS ret_21d,
-               exp(sum(ln(1 + g.ew_cc)) FILTER (WHERE d.k <= 63)) - 1 AS ret_63d,
+               {agg(5)} AS ret_5d, {agg(21)} AS ret_21d, {agg(63)} AS ret_63d,
                any_value(g.n_members) FILTER (WHERE d.k = 1) AS members
         FROM group_returns_daily g JOIN d USING (date) JOIN n USING (group_code)
         WHERE g.level = 'l2' AND d.k <= 63 GROUP BY 1 HAVING count(g.ew_cc) FILTER (WHERE d.k <= 21) >= 17
-        ORDER BY ret_21d DESC""", (as_of,))
+        ORDER BY ret_21d DESC""", [as_of]).df()
+
+
+def industry_momentum(reader: Reader, as_of: date) -> ReadResult:
+    """Each industry index versus the market over the last 5, 21 and 63 sessions up to as_of: cumulative
+    relative return (definition v2) when the cross build has it, else the sum of daily excess returns (v1)."""
+    return reader.read("cross", ("industry_momentum", as_of), lambda con: _industry_momentum(con, as_of))

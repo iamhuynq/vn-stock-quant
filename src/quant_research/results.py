@@ -168,8 +168,19 @@ class ResultsStore:
         """running -> ok, once every result and hypothesis row of the run is written. A run that raises is set to
         failed when the store exits; a process killed mid-run leaves `running`. Only `ok` runs count anywhere
         (q-values, duplicate guards, reports)."""
-        self.con.execute("UPDATE research_runs SET status = 'ok' WHERE run_id = ? AND status = 'running'", [run_id])
+        changed = self.con.execute("UPDATE research_runs SET status = 'ok' WHERE run_id = ? AND status = 'running'",
+                                   [run_id]).fetchone()[0]
+        if changed != 1:
+            row = self.con.execute("SELECT status FROM research_runs WHERE run_id = ?", [run_id]).fetchone()
+            state = "missing" if row is None else f"in state {row[0]!r}"
+            raise RuntimeError(f"finish_run({run_id}): the run is {state}, not 'running'; nothing was marked ok")
         self._open_runs.discard(run_id)
+
+    def stuck_runs(self) -> list[tuple[str, str]]:
+        """Runs left `running` by a process that was killed: not valid anywhere. Recovery: inspect, then
+        `quant runs --invalidate RUN --reason "process killed"` (runs are never deleted) and run again."""
+        return self.con.execute("""SELECT run_id, created_at::VARCHAR FROM research_runs WHERE status = 'running'
+                                   ORDER BY created_at""").fetchall()
 
     def provenance(self, config_json: str | None = None) -> dict:
         from quant_research.provenance import collect

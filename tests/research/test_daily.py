@@ -170,3 +170,19 @@ def test_paper_portfolio_never_uses_an_incomplete_session(tmp_path):
         r = run_daily(store, NOW, rule=RULE, n_random=2)
         last_day = store.con.execute("SELECT max(date) FROM paper_daily WHERE run_date = ?", [r.paper_date]).fetchone()[0]
     assert r.paper_date == FORWARD_DAYS[-1] and last_day == FORWARD_DAYS[-1]
+
+
+def test_paper_portfolio_stops_before_an_incomplete_session_in_the_middle(tmp_path):
+    """complete -> incomplete -> complete: the re-simulation must not cross the incomplete session."""
+    wh, rs = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    build_synthetic_warehouse(wh, start=START)
+    middle = FORWARD_DAYS[-3]
+    with Warehouse(wh) as w:
+        w.connection.execute("DELETE FROM quotes_daily WHERE date = ? AND symbol = 'STK'", [middle])
+    build(wh, rs, NOW)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        statuses = dict(store.con.execute("SELECT scan_date, status FROM daily_scans WHERE is_forward").fetchall())
+        last_day = store.con.execute("SELECT max(date) FROM paper_daily WHERE run_date = ?", [r.paper_date]).fetchone()[0]
+    assert statuses[middle] == "incomplete" and statuses[FORWARD_DAYS[-1]] == "scanned"
+    assert r.paper_date == FORWARD_DAYS[-4] and last_day == FORWARD_DAYS[-4]

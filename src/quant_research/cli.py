@@ -311,6 +311,12 @@ def cmd_runs(invalidate: str | None, reason: str | None) -> int:
                                         FROM research_runs ORDER BY created_at DESC LIMIT 30""").fetchall():
             print(f"  {row}")
         print(f"Holdout runs so far: {store.holdout_runs()}")
+        stuck = [r for r in store.stuck_runs() if r[0] not in store._open_runs]
+        if stuck:
+            print(f"Runs left 'running' by a killed process ({len(stuck)}); they count nowhere. Invalidate each with "
+                  "`quant runs --invalidate RUN --reason \"process killed\"` and run it again:")
+            for run_id, created in stuck:
+                print(f"  {run_id} (started {created})")
     return 0
 
 

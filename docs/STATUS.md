@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-10-14. Update this file at the end of every task.
+Last updated: 2026-10-15. Update this file at the end of every task.
 
 ## Data
 
@@ -96,7 +96,12 @@ Registry). Summary:
   - the paper portfolio only uses complete sessions;
   - exact Spearman and tie-break in the decile scan (research scan re-run; no logged test crosses 0.05);
   - consistent stale share;
-  - compounded v2 group returns (v1 records unchanged).
+  - group returns v2 (v1 records unchanged).
+
+  PR #3 review fixes, second commit:
+  - v2 redefined as the cumulative relative return versus the market;
+  - the paper portfolio stops at the last contiguous complete session;
+  - `finish_run` checks the transition, and `quant runs` lists stuck runs.
 
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.

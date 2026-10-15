@@ -17,8 +17,12 @@ REVERSAL_LOOKBACK = 5
 MIN_GROUP_MEMBERS = 5
 
 
-def _index(store: ResultsStore) -> tuple[np.ndarray, list[str], np.ndarray]:
-    df = store.con.execute("SELECT date, group_code, ew_cc FROM cx.group_returns_daily WHERE level = 'l2'").df()
+def _index(store: ResultsStore, definition: str = "v1") -> tuple[np.ndarray, list[str], np.ndarray]:
+    """Daily industry series: v1 = equal-weight excess return (summed by _past); v2 = daily log relative
+    return ln((1 + group) / (1 + market)), +inf where a return is <= -1 (the window then has no value)."""
+    value = "ew_cc" if definition == "v1" else "CASE WHEN rel_invalid THEN 'inf'::DOUBLE ELSE log_rel END"
+    df = store.con.execute(f"""SELECT date, group_code, {value} AS ew_cc FROM cx.group_returns_daily
+                               WHERE level = 'l2'""").df()
     dates = np.array([r[0] for r in store.con.execute("SELECT DISTINCT date FROM cx.returns_daily ORDER BY 1")
                       .fetchall()], dtype="datetime64[D]")
     codes = sorted(df["group_code"].unique().tolist())
@@ -29,12 +33,17 @@ def _index(store: ResultsStore) -> tuple[np.ndarray, list[str], np.ndarray]:
 
 def _past(dates: np.ndarray, ret: np.ndarray, day: np.datetime64, lookback: int, compound: bool = False) -> np.ndarray:
     """Return over the last `lookback` sessions up to and including `day`; NaN below 80% coverage.
-    v1 (compound=False, used by every recorded run): sum of daily excess returns. v2: compounded,
-    exp(sum(log1p(r))) - 1 over the available days (missing days skipped, same coverage rule)."""
+    v1 (compound=False, used by every recorded run): sum of daily excess returns. v2 (compound=True, `ret` holds
+    daily log relative returns from _index(definition="v2")): cumulative relative return versus the market,
+    exp(sum) - 1 over the available days; NaN if the window holds an invalid (+inf) day."""
     end = int(np.searchsorted(dates, day, side="right"))
     block = ret[max(0, end - lookback):end]
     ok = np.isfinite(block).sum(axis=0) >= 0.8 * lookback
-    total = np.expm1(np.nansum(np.log1p(block), axis=0)) if compound else np.nansum(block, axis=0)
+    if compound:
+        ok &= ~np.isinf(block).any(axis=0)
+        total = np.expm1(np.nansum(np.where(np.isinf(block), np.nan, block), axis=0))
+    else:
+        total = np.nansum(block, axis=0)
     return np.where(ok, total, np.nan)
 
 
@@ -88,7 +97,7 @@ def run_group_momentum(store: ResultsStore, period: str, params: ResearchParams,
     name = "group_momentum" if definition == "v1" else f"group_momentum_{definition}"
     run_id = f"{now:%Y%m%dT%H%M%S}-cross-{name}-{period}"
     store.start_run(run_id, "cross", period, params, now, (name, definition))
-    dates, codes, ret = _index(store)
+    dates, codes, ret = _index(store, definition)
     outcomes = _outcomes(store, params, period, 20, at_month_end=True)
     for lookback in MOMENTUM_LOOKBACKS:
         d, turnover = _tercile_spread(dates, codes, ret, outcomes, lookback, "top", compound=definition != "v1")
@@ -108,7 +117,7 @@ def run_group_reversal(store: ResultsStore, period: str, params: ResearchParams,
     name = "group_reversal" if definition == "v1" else f"group_reversal_{definition}"
     run_id = f"{now:%Y%m%dT%H%M%S}-cross-{name}-{period}"
     store.start_run(run_id, "cross", period, params, now, (name, definition))
-    dates, codes, ret = _index(store)
+    dates, codes, ret = _index(store, definition)
     outcomes = _outcomes(store, params, period, 5, at_month_end=False)
     d, turnover = _tercile_spread(dates, codes, ret, outcomes, REVERSAL_LOOKBACK, "bottom",
                                   sample_every=REVERSAL_LOOKBACK, compound=definition != "v1")
