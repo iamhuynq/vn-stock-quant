@@ -49,6 +49,7 @@ def data_dir(tmp_path_factory):
         run_daily(store, NOW, rule=RULE, n_random=2)
         store.start_run("run-a", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
         store.log_hypothesis("run-a", "lift_exec_excess_10d", "research", 0.01, NOW)
+        store.finish_run("run-a")
     (d / "reports" / "daily").mkdir(parents=True)
     (d / "reports" / "daily" / "2026-10-05.md").write_text("# Daily report\n")
     return d

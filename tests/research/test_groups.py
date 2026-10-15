@@ -113,3 +113,43 @@ def test_tercile_spread_matches_a_direct_computation():
     assert spread.tolist() == [pytest.approx(np.mean([4.0, 5.0]) - np.mean(range(6)))]
     spread, _ = _tercile_spread(dates, codes, ret, outcomes, 21, "bottom")
     assert spread.tolist() == [pytest.approx(np.mean([0.0, 1.0]) - np.mean(range(6)))]
+
+
+def test_v2_is_the_cumulative_relative_return_versus_the_market(planted, tmp_path):
+    """v2 = prod(1 + group) / prod(1 + market) - 1 (not compounded daily excess returns); invalid returns (<= -1)
+    leave the window empty; v1 (sums, used by every recorded result) is unchanged."""
+    from quant_research.cross.group_tests import _past, run_group_momentum
+    from quant_research.cross.groups import MOMENTUM_SESSIONS, min_valid
+    from quant_research.cross.hypotheses import _record
+    g, m = np.array([0.02, -0.01, 0.03, 0.005]), np.array([0.01, 0.00, 0.01, -0.02])
+    log_rel = (np.log1p(g) - np.log1p(m))[:, None]
+    dates = np.arange(np.datetime64("2024-01-01"), np.datetime64("2024-01-05"))
+    by_hand = (1.02 * 0.99 * 1.03 * 1.005) / (1.01 * 1.00 * 1.01 * 0.98) - 1
+    assert _past(dates, log_rel, dates[-1], 4, compound=True)[0] == pytest.approx(by_hand, rel=1e-12)
+    assert by_hand != pytest.approx(np.prod(1 + g - m) - 1, rel=1e-6)            # not compounded excess returns
+    assert _past(dates, (g - m)[:, None], dates[-1], 4)[0] == pytest.approx((g - m).sum())   # v1 unchanged
+    bad = log_rel.copy()
+    bad[1, 0] = np.inf                                                        # a return <= -1 in the window
+    assert np.isnan(_past(dates, bad, dates[-1], 4, compound=True)[0])
+    gr = pd.DataFrame(q(planted / "c.duckdb", """SELECT date, group_code, ew_raw, mkt_cc, log_rel FROM group_returns_daily
+                                                  WHERE level = 'l2' ORDER BY group_code, date"""),
+                      columns=["date", "group_code", "ew_raw", "mkt_cc", "log_rel"])
+    feats = pd.DataFrame(q(planted / "c.duckdb", "SELECT DISTINCT date, group_code, grp_rel_21 FROM group_features"),
+                         columns=["date", "group_code", "grp_rel_21"])
+    code = feats.dropna()["group_code"].iloc[0]
+    one = gr[gr["group_code"] == code].reset_index(drop=True)
+    want = {}
+    for i in range(len(one)):
+        w = one.iloc[max(0, i - 20):i + 1].dropna(subset=["ew_raw", "mkt_cc"])
+        if len(w) >= min_valid(MOMENTUM_SESSIONS):
+            want[one["date"][i]] = np.prod(1 + w["ew_raw"]) / np.prod(1 + w["mkt_cc"]) - 1
+    got = feats[(feats["group_code"] == code)].dropna().set_index("date")["grp_rel_21"]
+    assert len(got) > 10 and all(got[d] == pytest.approx(want[d], rel=1e-9) for d in got.index)
+    first = one.index[one["date"] == got.index.min()][0]                   # first value: exactly 17 valid of 21
+    assert one.iloc[max(0, first - 20):first + 1].dropna(subset=["ew_raw", "mkt_cc"]).shape[0] == 17
+    assert [min_valid(n) for n in (5, 21, 63)] == [4, 17, 51]
+    with ResultsStore(tmp_path / "results.duckdb", planted / "r.duckdb") as store:
+        attach(store, planted / "c.duckdb")
+        run_v2 = run_group_momentum(store, "research", RESEARCH, NOW, _record, definition="v2")
+        version = store.con.execute("SELECT pattern_name, pattern_version, status FROM research_runs").fetchone()
+    assert "group_momentum_v2" in run_v2 and version == ("group_momentum_v2", "v2", "ok")

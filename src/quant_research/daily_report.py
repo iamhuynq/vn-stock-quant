@@ -118,7 +118,7 @@ def render_daily(store: ResultsStore, result: DailyResult, now: datetime, day: d
 
     lines += _catalog_lines(store, d)
     if catch_up:
-        return "\n".join(lines + _paper_lines(con, result.latest_date, d, positions=False)) + "\n"
+        return "\n".join(lines + _paper_lines(con, result.paper_date, d, positions=False)) + "\n"
     lines += ["", "## Forward scoreboard (events since " + str(FORWARD_START) + ")", ""]
     universe = ResearchParams().universe_sql()
     board = con.execute(f"""
@@ -137,12 +137,16 @@ def render_daily(store: ResultsStore, result: DailyResult, now: datetime, day: d
     else:
         lines.append("_No forward events yet._")
 
-    return "\n".join(lines + _paper_lines(con, result.latest_date, d, positions=True)) + "\n"
+    return "\n".join(lines + _paper_lines(con, result.paper_date, d, positions=True)) + "\n"
 
 
 def _paper_lines(con, run_date: date | None, d: date, positions: bool) -> list[str]:
     """Paper portfolio as of session d, from the latest re-simulation (run_date)."""
     lines = ["", "## Paper portfolio (frozen strategy 72c851c7, since " + str(FORWARD_START) + ")", ""]
+    if run_date is not None and run_date < d:
+        lines.append(f"_Up to {run_date}, the latest complete session: later sessions are incomplete in the source "
+                     "and are not used until they are complete._")
+        lines.append("")
     last = con.execute("""SELECT date, equity, random_p05, random_median, random_p95, equal_weight, vnindex, n_positions,
                                  equity_traded_mark
                           FROM paper_daily WHERE run_date = ? AND date <= ? ORDER BY date DESC LIMIT 1""",

@@ -185,11 +185,10 @@ def run(market: Market, strategy: Strategy, selector: Selector = signal_selector
             cash += _proceeds(pos, close, strategy, extra)
             _sell(res, positions, j, i, close, strategy, market, "planned", extra)
 
-        invested = sum(p.shares * p.last_price for p in positions.values()
-                       if writedown_after is None or i - p.last_trade <= writedown_after)
-        if invested > 0:
-            stale = sum(p.shares * p.last_price for p in positions.values()
-                        if i - p.last_trade > STALE_SESSIONS) / invested
+        marked = [p for p in positions.values() if writedown_after is None or i - p.last_trade <= writedown_after]
+        invested = sum(p.shares * p.last_price for p in marked)
+        if invested > 0:                       # same marks in numerator and denominator; no marked value: skipped
+            stale = sum(p.shares * p.last_price for p in marked if i - p.last_trade > STALE_SESSIONS) / invested
             res.stale_value_share_max = max(res.stale_value_share_max, stale)
             stale_sum, held_sessions = stale_sum + stale, held_sessions + 1
         res.cash[i], res.invested[i], res.n_positions[i] = cash, invested, len(positions)

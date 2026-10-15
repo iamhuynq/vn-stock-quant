@@ -17,6 +17,13 @@ LEVELS = {"l2": "industry_l2_code", "l3": "industry_l3_code"}
 MIN_MEMBERS = 5
 MOMENTUM_SESSIONS = 21          # 1 month, for the laggard features
 
+
+def min_valid(n: int) -> int:
+    """At least 80% of n sessions, rounded UP (17 of 21, 51 of 63), in integer arithmetic. Every new definition
+    uses it. Legacy definitions keep int(0.8 * n), rounded down (16 of 21): the v1 group features and the
+    correlation snapshots, because recorded results depend on them."""
+    return -(-4 * n // 5)
+
 GROUPS_SQL = """
 CREATE TABLE group_members_monthly AS
 WITH e AS (
@@ -32,40 +39,63 @@ UNION ALL
 SELECT month_end, 'l3', industry_l3_code, symbol, adv_value_20 FROM e WHERE industry_l3_code IS NOT NULL;
 
 CREATE TABLE group_returns_daily AS
-WITH r AS (SELECT d.symbol, d.date, d.ex_cc, d.ex_oc, m.month_end
-           FROM returns_daily d ASOF JOIN month_ends m ON d.date > m.month_end)
+WITH r AS (SELECT d.symbol, d.date, d.ex_cc, d.ex_oc, d.raw_cc, m.month_end
+           FROM returns_daily d ASOF JOIN month_ends m ON d.date > m.month_end),
+x AS (
 SELECT r.date, g.level, g.group_code,
        CASE WHEN count(r.ex_cc) >= {min_members} THEN avg(r.ex_cc) END AS ew_cc,
+       -- for definition v2: the group's raw equal-weight return and the market return of that session
+       -- (raw_cc - ex_cc is the market return by construction of returns_daily)
+       CASE WHEN count(r.ex_cc) >= {min_members} THEN avg(r.raw_cc) FILTER (WHERE r.ex_cc IS NOT NULL) END AS ew_raw,
+       avg(r.raw_cc - r.ex_cc) AS mkt_cc,
        CASE WHEN count(r.ex_cc) >= {min_members}
             THEN sum(r.ex_cc * g.adv_value_20) / sum(g.adv_value_20) FILTER (WHERE r.ex_cc IS NOT NULL) END AS vw_cc,
        CASE WHEN count(r.ex_oc) >= {min_members} THEN avg(r.ex_oc) END AS ew_oc,
        count(r.ex_cc) AS n_members
 FROM r JOIN group_members_monthly g ON g.symbol = r.symbol AND g.month_end = r.month_end
-GROUP BY 1, 2, 3;
+GROUP BY 1, 2, 3)
+SELECT *,
+       -- v2 daily log relative return ln((1 + group) / (1 + market)), invalid (no log) when a return is <= -1
+       CASE WHEN ew_raw > -1 AND mkt_cc > -1 THEN ln(1 + ew_raw) - ln(1 + mkt_cc) END AS log_rel,
+       (ew_raw <= -1 OR mkt_cc <= -1) AS rel_invalid
+FROM x;
 """
 
 # Laggard features: the stock's industry (level 2) 1-month index return and its tercile among industries
 # that day, and whether the stock's own 1-month excess return is in the bottom half of its industry.
+# Definition v1 (grp_ret_21, own_ret_21, the tercile and the bottom-half flag; used by the recorded G4 pattern):
+# sums of daily excess returns (stock return minus market return, summed).
+# Definition v2 (*_rel_21, for new tests only): cumulative relative return versus the market,
+# prod(1 + r) / prod(1 + r_market) - 1 = exp(sum(log_rel)) - 1 over the available sessions (missing sessions
+# skipped in both products, at least min_valid(21) = 17 of 21); NULL if any return in the window is <= -1.
 GROUP_FEATURES_SQL = """
 CREATE TABLE group_features AS
 WITH g AS (
     SELECT date, group_code,
-           CASE WHEN count(ew_cc) OVER w >= {min_obs} THEN sum(ew_cc) OVER w END AS grp_ret_21
+           CASE WHEN count(ew_cc) OVER w >= {min_obs} THEN sum(ew_cc) OVER w END AS grp_ret_21,
+           CASE WHEN count(log_rel) OVER w >= {min_obs_v2} AND NOT coalesce(bool_or(rel_invalid) OVER w, false)
+                THEN exp(sum(log_rel) OVER w) - 1 END AS grp_rel_21
     FROM group_returns_daily WHERE level = 'l2'
     WINDOW w AS (PARTITION BY group_code ORDER BY date ROWS BETWEEN {lookback_m1} PRECEDING AND CURRENT ROW)),
 gt AS (SELECT *, ntile(3) OVER (PARTITION BY date ORDER BY grp_ret_21) AS grp_tercile
        FROM g WHERE grp_ret_21 IS NOT NULL),
 s AS (
     SELECT d.symbol, d.date,
-           CASE WHEN count(d.ex_cc) OVER w >= {min_obs} THEN sum(d.ex_cc) OVER w END AS own_ret_21
-    FROM returns_daily d
+           CASE WHEN count(d.ex_cc) OVER w >= {min_obs} THEN sum(d.ex_cc) OVER w END AS own_ret_21,
+           CASE WHEN count(d.log_rel) OVER w >= {min_obs_v2} AND NOT coalesce(bool_or(d.rel_invalid) OVER w, false)
+                THEN exp(sum(d.log_rel) OVER w) - 1 END AS own_rel_21
+    FROM (SELECT *, CASE WHEN raw_cc > -1 AND raw_cc - ex_cc > -1 THEN ln(1 + raw_cc) - ln(1 + raw_cc - ex_cc) END
+                        AS log_rel,
+                    (raw_cc <= -1 OR raw_cc - ex_cc <= -1) AS rel_invalid
+          FROM returns_daily) d
     WINDOW w AS (PARTITION BY d.symbol ORDER BY d.date ROWS BETWEEN {lookback_m1} PRECEDING AND CURRENT ROW)),
 m AS (SELECT s.*, mm.month_end FROM s ASOF JOIN month_ends mm ON s.date > mm.month_end),
-j AS (SELECT m.symbol, m.date, gm.group_code, m.own_ret_21, gt.grp_ret_21, gt.grp_tercile
+j AS (SELECT m.symbol, m.date, gm.group_code, m.own_ret_21, gt.grp_ret_21, gt.grp_tercile, m.own_rel_21,
+             gt.grp_rel_21
       FROM m JOIN group_members_monthly gm ON gm.symbol = m.symbol AND gm.month_end = m.month_end AND gm.level = 'l2'
       JOIN gt ON gt.date = m.date AND gt.group_code = gm.group_code
       WHERE m.own_ret_21 IS NOT NULL)
-SELECT symbol, date, group_code, own_ret_21, grp_ret_21, grp_tercile,
+SELECT symbol, date, group_code, own_ret_21, grp_ret_21, grp_tercile, own_rel_21, grp_rel_21,
        percent_rank() OVER (PARTITION BY date, group_code ORDER BY own_ret_21) < 0.5 AS own_bottom_half
 FROM j
 """
@@ -75,7 +105,9 @@ def build_group_tables(con: duckdb.DuckDBPyConnection, params: CrossParams) -> d
     for sql in GROUPS_SQL.format(min_members=MIN_MEMBERS).split(";"):
         if sql.strip():
             con.execute(sql, [params.min_adv_value] if "rs.stock_features" in sql else [])
-    con.execute(GROUP_FEATURES_SQL.format(min_obs=int(0.8 * MOMENTUM_SESSIONS), lookback_m1=MOMENTUM_SESSIONS - 1))
+    con.execute(GROUP_FEATURES_SQL.format(min_obs=int(0.8 * MOMENTUM_SESSIONS),          # v1: legacy, rounded down
+                                          min_obs_v2=min_valid(MOMENTUM_SESSIONS),        # v2: rounded up
+                                          lookback_m1=MOMENTUM_SESSIONS - 1))
     rows = {t: con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
             for t in ("group_members_monthly", "group_returns_daily", "group_features")}
     corr, ll = [], []

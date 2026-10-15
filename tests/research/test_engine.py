@@ -113,6 +113,32 @@ def test_scan_ranks_the_signal_feature_and_not_the_noise(store):
     assert "volume_ratio_20" in render_scan(store.con, run_id, NOW)
 
 
+def test_scan_ic_is_exact_spearman_with_ties_and_deciles_are_deterministic(store):
+    """A coarse feature (many ties): the scan IC must equal scipy's Spearman (average ranks) per date, and the
+    decile means must be identical across runs (ties broken by symbol)."""
+    import numpy as np
+    import scipy.stats as sps
+    table = "(SELECT *, round(volume_ratio_20 * 4, 0) AS coarse FROM rs.feature_target)"   # 5 unequal tie groups
+    ids = [run_scan(store, "research", PARAMS, NOW.replace(minute=m), features=("coarse",), table=table, name=f"ties{m}")
+           for m in (1, 2)]
+    got = store.con.execute("""SELECT ic_mean FROM scan_stats WHERE run_id = ? AND feature = 'coarse'
+                               AND horizon = 'exec_excess_10d' AND segment = 'all'""", [ids[0]]).fetchone()[0]
+    rows = store.con.execute(f"""SELECT date, coarse, fwd_excess_exec_10d FROM {table}
+        WHERE {PARAMS.universe_sql()} AND period = 'research' AND coarse IS NOT NULL AND isfinite(coarse)
+          AND fwd_excess_exec_10d IS NOT NULL""").df()
+    ics = []
+    for _, g in rows.groupby("date"):
+        if len(g) >= PARAMS.min_stocks_per_date:
+            v = sps.spearmanr(g["coarse"], g["fwd_excess_exec_10d"]).statistic
+            if np.isfinite(v):
+                ics.append(v)
+    assert rows.groupby("date")["coarse"].nunique().mean() < rows.groupby("date").size().mean() / 3   # many ties
+    assert got == pytest.approx(np.mean(ics), rel=1e-9)
+    deciles = [store.con.execute("""SELECT feature, horizon, segment, decile, mean FROM scan_deciles WHERE run_id = ?
+                                    ORDER BY ALL""", [r]).fetchall() for r in ids]
+    assert deciles[0] == deciles[1] and deciles[0]
+
+
 def test_runs_do_not_modify_the_research_database(store):
     before = file_hash(store.research_path)
     run_pattern(store, SIGNAL, "research", PARAMS, NOW, library=LIB)

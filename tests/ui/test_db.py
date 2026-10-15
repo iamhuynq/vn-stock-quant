@@ -99,3 +99,20 @@ def test_writer_gives_up_after_the_wait(setup):
     _reader, _clock, path = setup
     with held(path, "ro"), pytest.raises(duckdb.IOException):
         connect_with_retry(path, wait_seconds=0.5)
+
+
+def test_current_paper_date_distinguishes_a_missing_state_row_from_an_explicit_null():
+    from datetime import date
+    import duckdb
+    from stock_ui.research_data import current_paper_date
+    con = duckdb.connect()
+    con.execute("CREATE TABLE paper_daily (run_date DATE, date DATE, equity DOUBLE)")
+    con.execute("INSERT INTO paper_daily VALUES ('2026-10-06', '2026-10-06', 1.0), ('2026-10-07', '2026-10-07', 1.0)")
+    assert current_paper_date(con) == date(2026, 10, 7)                         # no paper_state table
+    con.execute("CREATE TABLE paper_state (id INTEGER PRIMARY KEY, paper_date DATE, updated_at TIMESTAMPTZ)")
+    assert current_paper_date(con) == date(2026, 10, 7)                         # table, but no state row
+    con.execute("INSERT INTO paper_state VALUES (1, NULL, now())")
+    assert current_paper_date(con) is None                                      # explicit: no valid record
+    con.execute("UPDATE paper_state SET paper_date = '2026-10-06' WHERE id = 1")
+    assert current_paper_date(con) == date(2026, 10, 6)                         # the recorded state wins
+    assert current_paper_date(duckdb.connect()) is None                         # no paper tables at all

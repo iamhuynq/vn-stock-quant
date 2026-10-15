@@ -97,6 +97,7 @@ def run_backtest(store: ResultsStore, label: str, strategy: Strategy, period: st
                           [(a, b, c, None if d is None or not np.isfinite(d) else float(d)) for a, b, c, d in rows])
     store.log_hypothesis(run_id, "excess_vs_equal_weight", period, p, now)
     _store_series(store, run_id, market, res, ew, vn, np.median(rnd, axis=0))
+    store.finish_run(run_id)
     return run_id
 
 

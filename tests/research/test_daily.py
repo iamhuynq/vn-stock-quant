@@ -152,3 +152,96 @@ def test_catch_up_run_writes_one_report_per_scanned_session(tmp_path):
     latest = paths[-1].read_text()
     assert "Catch-up report" not in latest and "## Forward scoreboard" in latest
     assert first == on_time
+
+
+def test_paper_portfolio_never_uses_an_incomplete_session(tmp_path):
+    """The scan rejects a partial session; the paper portfolio must stop at the previous complete one."""
+    from quant_research.daily_report import render_daily
+    rs = make(tmp_path, drop_last_for="STK")
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        dates = [d for (d,) in store.con.execute("SELECT DISTINCT run_date FROM paper_daily").fetchall()]
+        last_day = store.con.execute("SELECT max(date) FROM paper_daily").fetchone()[0]
+        report = render_daily(store, r, NOW)
+    assert r.paper_date == FORWARD_DAYS[-2] and dates == [FORWARD_DAYS[-2]] and last_day == FORWARD_DAYS[-2]
+    assert "latest complete session" in report
+    rs = make(tmp_path)                                               # complete now: the paper portfolio catches up
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        last_day = store.con.execute("SELECT max(date) FROM paper_daily WHERE run_date = ?", [r.paper_date]).fetchone()[0]
+    assert r.paper_date == FORWARD_DAYS[-1] and last_day == FORWARD_DAYS[-1]
+
+
+def test_paper_portfolio_stops_before_an_incomplete_session_in_the_middle(tmp_path):
+    """complete -> incomplete -> complete: the re-simulation must not cross the incomplete session."""
+    wh, rs = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    build_synthetic_warehouse(wh, start=START)
+    middle = FORWARD_DAYS[-3]
+    with Warehouse(wh) as w:
+        w.connection.execute("DELETE FROM quotes_daily WHERE date = ? AND symbol = 'STK'", [middle])
+    build(wh, rs, NOW)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        statuses = dict(store.con.execute("SELECT scan_date, status FROM daily_scans WHERE is_forward").fetchall())
+        last_day = store.con.execute("SELECT max(date) FROM paper_daily WHERE run_date = ?", [r.paper_date]).fetchone()[0]
+    assert statuses[middle] == "incomplete" and statuses[FORWARD_DAYS[-1]] == "scanned"
+    assert r.paper_date == FORWARD_DAYS[-4] and last_day == FORWARD_DAYS[-4]
+
+
+def test_paper_date_never_falls_before_the_forward_start_and_readers_follow_paper_state(tmp_path):
+    """A pre-forward session is scanned, and the first forward session becomes incomplete: there is no valid
+    paper record. paper_date is None, and readers do not show the older re-simulation as current."""
+    import duckdb as _duckdb
+    from stock_ui.exposure_data import paper_weights
+    from stock_ui.research_data import _paper
+    rs = make(tmp_path)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        first = run_daily(store, NOW, rule=RULE, n_random=2)                    # a valid record exists
+    assert first.paper_date == FORWARD_DAYS[-1]
+    pre = [d for d in calendar(START) if d < FORWARD_START][-1]
+    wh, rs2 = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    with Warehouse(wh) as w:                                                    # the first forward day breaks
+        w.connection.execute("DELETE FROM quotes_daily WHERE date = ? AND symbol = 'STK'", [FORWARD_DAYS[0]])
+    build(wh, rs2, NOW)
+    with ResultsStore(tmp_path / "results.duckdb", rs2) as store:
+        run_daily(store, NOW, rescan=pre, rule=RULE, n_random=2)                # a scanned pre-forward session
+        r = run_daily(store, NOW, rescan=FORWARD_DAYS[0], rule=RULE, n_random=2)
+        state = store.con.execute("SELECT paper_date FROM paper_state").fetchone()[0]
+        kept = store.con.execute("SELECT count(*) FROM paper_daily WHERE run_date = ?", [FORWARD_DAYS[-1]]).fetchone()[0]
+    assert r.paper_date is None and state is None and kept > 0                  # history kept, not current
+    con = _duckdb.connect(str(tmp_path / "results.duckdb"), read_only=True)
+    try:
+        assert _paper(con) == {"run_date": None}
+    finally:
+        con.close()
+
+    class _Reader:                                                              # minimal Reader for paper_weights
+        def read(self, _db, _key, fn):
+            c = _duckdb.connect(str(tmp_path / "results.duckdb"), read_only=True)
+            try:
+                from stock_ui.db import ReadResult
+                return ReadResult(fn(c), None, False, None)
+            finally:
+                c.close()
+    assert paper_weights(_Reader()).value == {}
+
+
+def test_one_forward_session_gives_no_current_paper_record(tmp_path):
+    """With a single complete forward session there is nothing to simulate: paper_state must be NULL and no
+    paper rows may remain for that run_date."""
+    rs = make(tmp_path)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        run_daily(store, NOW, rule=RULE, n_random=2)
+        store.con.execute("INSERT INTO paper_daily (run_date, date, equity) VALUES (?, ?, 1.0)",
+                          [FORWARD_DAYS[0], FORWARD_DAYS[0]])                # a stale row for that run_date
+        sessions = run_paper(store, FORWARD_DAYS[0], rule=RULE, n_random=2)
+        left = store.con.execute("SELECT count(*) FROM paper_daily WHERE run_date = ?", [FORWARD_DAYS[0]]).fetchone()[0]
+    assert sessions == 1 and left == 0
+    wh, rs2 = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    with Warehouse(wh) as w:                                                  # only the first forward day complete
+        w.connection.execute("DELETE FROM quotes_daily WHERE date = ? AND symbol = 'STK'", [FORWARD_DAYS[1]])
+    build(wh, rs2, NOW)
+    with ResultsStore(tmp_path / "results2.duckdb", rs2) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        state = store.con.execute("SELECT paper_date FROM paper_state").fetchone()[0]
+    assert r.paper_date == FORWARD_DAYS[0] and r.paper_sessions == 1 and state is None

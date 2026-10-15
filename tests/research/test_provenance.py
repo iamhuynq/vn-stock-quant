@@ -72,3 +72,70 @@ def test_research_code_hash_covers_every_module_that_shapes_a_result(tmp_path):
     assert before == research_code_hash()                          # same files, same hash
     (copy / "portfolio" / "engine.py").write_text((copy / "portfolio" / "engine.py").read_text() + "\n# change\n")
     assert research_code_hash(copy) != before
+
+
+def test_run_lifecycle_running_ok_failed(tmp_path):
+    """A run is `ok` only after finish_run; an error before that leaves it `failed`: out of the q-values, and
+    the duplicate guards (which look for `ok`) allow a re-run."""
+    import pytest
+    from quant_research import interactions
+    wh, rs = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    build_synthetic_warehouse(wh)
+    build(wh, rs, NOW)
+    results = tmp_path / "results.duckdb"
+    with ResultsStore(results, rs) as store:
+        store.start_run("good", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+        assert store.con.execute("SELECT status FROM research_runs WHERE run_id = 'good'").fetchone()[0] == "running"
+        store.log_hypothesis("good", "t", "research", 0.01, NOW)
+        store.finish_run("good")
+    with pytest.raises(RuntimeError, match="boom"):
+        with ResultsStore(results, rs) as store:
+            store.start_run("broken", "interaction", "research", ResearchParams(), NOW, ("interaction_scan", "v"))
+            store.log_hypothesis("broken", "t", "research", 0.001, NOW)
+            raise RuntimeError("boom")
+    with ResultsStore(results, rs) as store:
+        rows = dict(store.con.execute("SELECT run_id, status FROM research_runs").fetchall())
+        reason = store.con.execute("SELECT invalid_reason FROM research_runs WHERE run_id = 'broken'").fetchone()[0]
+        q_runs = {r for (r,) in store.con.execute("SELECT DISTINCT run_id FROM hypothesis_q").fetchall()}
+        assert interactions.already_run(store, "research") is None                 # a failed run can be re-run
+    assert rows == {"good": "ok", "broken": "failed"} and "boom" in reason and q_runs == {"good"}
+
+
+def test_finish_run_requires_exactly_one_running_run(tmp_path):
+    import pytest
+    wh, rs = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    build_synthetic_warehouse(wh)
+    build(wh, rs, NOW)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        with pytest.raises(RuntimeError, match="missing"):
+            store.finish_run("nope")
+        store.start_run("r1", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+        store.finish_run("r1")
+        with pytest.raises(RuntimeError, match="in state 'ok'"):
+            store.finish_run("r1")                                          # already finished
+        store.start_run("r2", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+        store.invalidate("r2", "test")
+        with pytest.raises(RuntimeError, match="in state 'invalid'"):
+            store.finish_run("r2")
+        store._open_runs.clear()                                            # r2 handled: invalid stays invalid
+        store.con.execute("INSERT INTO research_runs SELECT * REPLACE ('r3' AS run_id, 'running' AS status) "
+                          "FROM research_runs WHERE run_id = 'r1'")         # a run left by a killed process
+        assert [r[0] for r in store.stuck_runs()] == ["r3"]
+        status = dict(store.con.execute("SELECT run_id, status FROM research_runs").fetchall())
+    assert status == {"r1": "ok", "r2": "invalid", "r3": "running"}
+
+
+def test_an_invalidated_open_run_stays_invalid_when_the_store_exits_on_an_error(tmp_path):
+    import pytest
+    wh, rs = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    build_synthetic_warehouse(wh)
+    build(wh, rs, NOW)
+    with pytest.raises(RuntimeError, match="later"):
+        with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+            store.start_run("r1", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+            store.start_run("r2", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+            store.invalidate("r1", "test: definition bug")
+            raise RuntimeError("later")
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        rows = dict(store.con.execute("SELECT run_id, status || ':' || invalid_reason FROM research_runs").fetchall())
+    assert rows["r1"] == "invalid:test: definition bug" and rows["r2"].startswith("failed:RuntimeError")

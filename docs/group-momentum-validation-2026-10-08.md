@@ -41,3 +41,11 @@ The mean is <= 0 and the net is <= 0. Following the pre-registered rule:
 
 What remains useful is the descriptive layer: peers, industry blocks, rolling correlations (risk
 concentration). The validation period has now been used once for the cross-stock family (this run only).
+
+## Definition note (2026-10-14)
+
+The tested 21-session industry return is the **sum of daily excess returns** (definition v1), not the
+compounded return. On research dates the two give the same industry tercile in 97.8% of cases, and the
+same top-tercile flag in 98.9%. The decision above stands: the pre-registered definition was v1, and
+validation data cannot be reused. Future group tests use the compounded definition v2
+(`docs/review-2026-10-10-fixes-plan.md`).

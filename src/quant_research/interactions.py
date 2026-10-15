@@ -113,6 +113,7 @@ def run_scan(store: ResultsStore, period: str, now: datetime, params: ResearchPa
                               [run_id, factor, dim, a, b, res["n_a"], res["n_b"], res["diff"], res["se"], res["t"],
                                res["p"], *halves])
             store.log_hypothesis(run_id, f"ix_{factor}_{dim}", period, res["p"], now)
+    store.finish_run(run_id)
     return run_id
 
 

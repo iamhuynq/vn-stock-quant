@@ -1,6 +1,6 @@
 # Project status
 
-Last updated: 2026-10-09. Update this file at the end of every task.
+Last updated: 2026-10-15. Update this file at the end of every task.
 
 ## Data
 
@@ -90,6 +90,32 @@ Registry). Summary:
   - Branch `execution-audit`, PR #2. Its review asked for three fixes: NULL validation, the worse
     valuation in the verdict, and `last_trade` in legacy mode. They are a new commit, and the grid was
     re-run with no verdict change. The user pushes and merges.
+- Review of 2026-10-10 (plan `review-2026-10-10-fixes-plan.md`, branch `review-2026-10-10-fixes`, not
+  pushed):
+  - run lifecycle running / ok / failed;
+  - the paper portfolio only uses complete sessions;
+  - exact Spearman and tie-break in the decile scan (research scan re-run; no logged test crosses 0.05);
+  - consistent stale share;
+  - group returns v2 (v1 records unchanged).
+
+  PR #3 review fixes, second commit:
+  - v2 redefined as the cumulative relative return versus the market;
+  - the paper portfolio stops at the last contiguous complete session;
+  - `finish_run` checks the transition, and `quant runs` lists stuck runs.
+
+  Updated PR #3 review fixes, third commit:
+  - Market watch v2 checks validity per window;
+  - `paper_state` holds the current paper date, never before the forward start;
+  - `invalidate` closes the run;
+  - fixed a crash of the all-cash paper portfolio.
+
+  Re-review fixes, fourth commit:
+  - the 80% rule is rounded up for new definitions (`min_valid`), while legacy definitions keep
+    rounding down;
+  - `paper_state` is NULL when no paper record was simulated.
+
+  Fifth commit: a missing `paper_state` row falls back to the latest run; an explicit NULL is kept.
+
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

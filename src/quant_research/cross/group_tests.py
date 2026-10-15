@@ -17,8 +17,12 @@ REVERSAL_LOOKBACK = 5
 MIN_GROUP_MEMBERS = 5
 
 
-def _index(store: ResultsStore) -> tuple[np.ndarray, list[str], np.ndarray]:
-    df = store.con.execute("SELECT date, group_code, ew_cc FROM cx.group_returns_daily WHERE level = 'l2'").df()
+def _index(store: ResultsStore, definition: str = "v1") -> tuple[np.ndarray, list[str], np.ndarray]:
+    """Daily industry series: v1 = equal-weight excess return (summed by _past); v2 = daily log relative
+    return ln((1 + group) / (1 + market)), +inf where a return is <= -1 (the window then has no value)."""
+    value = "ew_cc" if definition == "v1" else "CASE WHEN rel_invalid THEN 'inf'::DOUBLE ELSE log_rel END"
+    df = store.con.execute(f"""SELECT date, group_code, {value} AS ew_cc FROM cx.group_returns_daily
+                               WHERE level = 'l2'""").df()
     dates = np.array([r[0] for r in store.con.execute("SELECT DISTINCT date FROM cx.returns_daily ORDER BY 1")
                       .fetchall()], dtype="datetime64[D]")
     codes = sorted(df["group_code"].unique().tolist())
@@ -27,12 +31,20 @@ def _index(store: ResultsStore) -> tuple[np.ndarray, list[str], np.ndarray]:
     return dates, codes, wide.to_numpy(dtype=float)
 
 
-def _past(dates: np.ndarray, ret: np.ndarray, day: np.datetime64, lookback: int) -> np.ndarray:
-    """Sum of the last `lookback` session returns up to and including `day`; NaN below 80% coverage."""
+def _past(dates: np.ndarray, ret: np.ndarray, day: np.datetime64, lookback: int, compound: bool = False) -> np.ndarray:
+    """Return over the last `lookback` sessions up to and including `day`; NaN below 80% coverage.
+    v1 (compound=False, used by every recorded run): sum of daily excess returns. v2 (compound=True, `ret` holds
+    daily log relative returns from _index(definition="v2")): cumulative relative return versus the market,
+    exp(sum) - 1 over the available days; NaN if the window holds an invalid (+inf) day."""
     end = int(np.searchsorted(dates, day, side="right"))
     block = ret[max(0, end - lookback):end]
     ok = np.isfinite(block).sum(axis=0) >= 0.8 * lookback
-    return np.where(ok, np.nansum(block, axis=0), np.nan)
+    if compound:
+        ok &= ~np.isinf(block).any(axis=0)
+        total = np.expm1(np.nansum(np.where(np.isinf(block), np.nan, block), axis=0))
+    else:
+        total = np.nansum(block, axis=0)
+    return np.where(ok, total, np.nan)
 
 
 def _outcomes(store: ResultsStore, params: ResearchParams, period: str, horizon: int, at_month_end: bool) -> dict:
@@ -56,13 +68,14 @@ def _outcomes(store: ResultsStore, params: ResearchParams, period: str, horizon:
     return out
 
 
-def _tercile_spread(dates, codes, ret, outcomes: dict, lookback: int, pick: str, sample_every: int = 1):
+def _tercile_spread(dates, codes, ret, outcomes: dict, lookback: int, pick: str, sample_every: int = 1,
+                    compound: bool = False):
     """Per date: mean outcome of the top (or bottom) tercile by past return minus the mean of all groups."""
     series, chosen = [], []
     for k, day in enumerate(sorted(outcomes)):
         if k % sample_every:
             continue
-        past = _past(dates, ret, day, lookback)
+        past = _past(dates, ret, day, lookback, compound)
         col = {c: i for i, c in enumerate(codes)}
         groups = [(past[col[c]], c, v) for c, v in outcomes[day].items() if c in col and np.isfinite(past[col[c]])]
         if len(groups) < 6:
@@ -77,34 +90,41 @@ def _tercile_spread(dates, codes, ret, outcomes: dict, lookback: int, pick: str,
 
 
 def run_group_momentum(store: ResultsStore, period: str, params: ResearchParams, now: datetime, record,
-                       final: bool = False) -> str:
+                       final: bool = False, definition: str = "v1") -> str:
+    """definition v1 = summed daily returns (pre-registered, validated and closed); v2 = compounded, for new
+    tests only (its own run name, so the v1 duplicate guard does not apply)."""
     check_period(period, final)
-    run_id = f"{now:%Y%m%dT%H%M%S}-cross-group_momentum-{period}"
-    store.start_run(run_id, "cross", period, params, now, ("group_momentum", "v1"))
-    dates, codes, ret = _index(store)
+    name = "group_momentum" if definition == "v1" else f"group_momentum_{definition}"
+    run_id = f"{now:%Y%m%dT%H%M%S}-cross-{name}-{period}"
+    store.start_run(run_id, "cross", period, params, now, (name, definition))
+    dates, codes, ret = _index(store, definition)
     outcomes = _outcomes(store, params, period, 20, at_month_end=True)
     for lookback in MOMENTUM_LOOKBACKS:
-        d, turnover = _tercile_spread(dates, codes, ret, outcomes, lookback, "top")
+        d, turnover = _tercile_spread(dates, codes, ret, outcomes, lookback, "top", compound=definition != "v1")
         se, t, p, _, _ = mean_test(d, 1)
         mean = float(d.mean()) if len(d) else None
         net = mean - turnover * params.cost_round_trip if mean is not None and turnover is not None else None
         record(store, run_id, f"group_momentum_{lookback}d", "exec_excess_20d", len(d), mean, se, t, p, period, now,
                {"turnover": turnover, "net_of_rotation_cost": net, "months": len(d)})
+    store.finish_run(run_id)
     return run_id
 
 
 def run_group_reversal(store: ResultsStore, period: str, params: ResearchParams, now: datetime, record,
-                       final: bool = False) -> str:
+                       final: bool = False, definition: str = "v1") -> str:
+    """definition as in run_group_momentum."""
     check_period(period, final)
-    run_id = f"{now:%Y%m%dT%H%M%S}-cross-group_reversal-{period}"
-    store.start_run(run_id, "cross", period, params, now, ("group_reversal", "v1"))
-    dates, codes, ret = _index(store)
+    name = "group_reversal" if definition == "v1" else f"group_reversal_{definition}"
+    run_id = f"{now:%Y%m%dT%H%M%S}-cross-{name}-{period}"
+    store.start_run(run_id, "cross", period, params, now, (name, definition))
+    dates, codes, ret = _index(store, definition)
     outcomes = _outcomes(store, params, period, 5, at_month_end=False)
     d, turnover = _tercile_spread(dates, codes, ret, outcomes, REVERSAL_LOOKBACK, "bottom",
-                                  sample_every=REVERSAL_LOOKBACK)
+                                  sample_every=REVERSAL_LOOKBACK, compound=definition != "v1")
     se, t, p, _, _ = mean_test(d, 0)
     mean = float(d.mean()) if len(d) else None
     net = mean - turnover * params.cost_round_trip if mean is not None and turnover is not None else None
     record(store, run_id, f"group_reversal_{REVERSAL_LOOKBACK}d", "exec_excess_5d", len(d), mean, se, t, p, period,
            now, {"turnover": turnover, "net_of_rotation_cost": net, "weeks": len(d)})
+    store.finish_run(run_id)
     return run_id

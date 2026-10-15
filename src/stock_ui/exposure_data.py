@@ -72,7 +72,11 @@ def paper_weights(reader: Reader) -> ReadResult:
         has = con.execute("SELECT count(*) FROM duckdb_tables() WHERE table_name = 'paper_positions'").fetchone()[0]
         if not has:
             return None
-        rows = con.execute("""SELECT symbol, shares * last_price FROM paper_positions
-                              WHERE run_date = (SELECT max(run_date) FROM paper_positions)""").fetchall()
+        from stock_ui.research_data import current_paper_date
+        current = current_paper_date(con)
+        if current is None:
+            return {}
+        rows = con.execute("""SELECT symbol, shares * last_price FROM paper_positions WHERE run_date = ?""",
+                           [current]).fetchall()
         return {s: float(v) for s, v in rows if v}
     return reader.read("results", "paper_weights", run)

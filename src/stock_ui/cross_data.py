@@ -10,6 +10,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from quant_research.cross.groups import min_valid
 from stock_ui.db import Reader, ReadResult
 
 ROLLING = (20, 60, 120)
@@ -127,17 +128,31 @@ def industry_pair_rolling(reader: Reader, a: str, b: str, as_of: date) -> ReadRe
     return reader.read("cross", ("industry_pair", a, b, as_of), lambda con: _industry_pair(con, a, b, as_of))
 
 
-def industry_momentum(reader: Reader, as_of: date) -> ReadResult:
-    """Excess return of each industry index over the last 5, 21 and 63 sessions up to as_of."""
-    return reader.query("cross", """
+def _industry_momentum(con: duckdb.DuckDBPyConnection, as_of: date) -> pd.DataFrame:
+    has_rel = con.execute("""SELECT count(*) FROM duckdb_columns() WHERE table_name = 'group_returns_daily'
+                             AND column_name = 'log_rel'""").fetchone()[0]
+    # v2: cumulative relative return versus the market, exp(sum(log_rel)) - 1, with the rules of the group features:
+    # at least 80% of the window's sessions valid (rounded up: min_valid) and no invalid return (<= -1) in it, else NULL. Older cross
+    # builds: sum of daily excess returns (v1).
+    def agg(k: int) -> str:
+        w = f"FILTER (WHERE d.k <= {k})"
+        if not has_rel:
+            return f"sum(g.ew_cc) {w}"
+        return (f"CASE WHEN count(g.log_rel) {w} >= {min_valid(k)} AND NOT coalesce(bool_or(g.rel_invalid) {w}, false) "
+                f"THEN exp(sum(g.log_rel) {w}) - 1 END")
+    return con.execute(f"""
         WITH d AS (SELECT date, row_number() OVER (ORDER BY date DESC) AS k
                    FROM (SELECT DISTINCT date FROM group_returns_daily WHERE level = 'l2' AND date <= ?)),
         n AS (SELECT group_code, any_value(name) AS name FROM group_names WHERE level = 'l2' GROUP BY 1)
         SELECT n.name AS industry, max(d.date) AS as_of,
-               sum(g.ew_cc) FILTER (WHERE d.k <= 5) AS ret_5d,
-               sum(g.ew_cc) FILTER (WHERE d.k <= 21) AS ret_21d,
-               sum(g.ew_cc) FILTER (WHERE d.k <= 63) AS ret_63d,
+               {agg(5)} AS ret_5d, {agg(21)} AS ret_21d, {agg(63)} AS ret_63d,
                any_value(g.n_members) FILTER (WHERE d.k = 1) AS members
         FROM group_returns_daily g JOIN d USING (date) JOIN n USING (group_code)
         WHERE g.level = 'l2' AND d.k <= 63 GROUP BY 1 HAVING count(g.ew_cc) FILTER (WHERE d.k <= 21) >= 17
-        ORDER BY ret_21d DESC""", (as_of,))
+        ORDER BY ret_21d DESC NULLS LAST""", [as_of]).df()
+
+
+def industry_momentum(reader: Reader, as_of: date) -> ReadResult:
+    """Each industry index versus the market over the last 5, 21 and 63 sessions up to as_of: cumulative
+    relative return (definition v2) when the cross build has it, else the sum of daily excess returns (v1)."""
+    return reader.read("cross", ("industry_momentum", as_of), lambda con: _industry_momentum(con, as_of))
