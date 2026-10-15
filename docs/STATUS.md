@@ -103,6 +103,12 @@ Registry). Summary:
   - the paper portfolio stops at the last contiguous complete session;
   - `finish_run` checks the transition, and `quant runs` lists stuck runs.
 
+  Updated PR #3 review fixes, third commit:
+  - Market watch v2 checks validity per window;
+  - `paper_state` holds the current paper date, never before the forward start;
+  - `invalidate` closes the run;
+  - fixed a crash of the all-cash paper portfolio.
+
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

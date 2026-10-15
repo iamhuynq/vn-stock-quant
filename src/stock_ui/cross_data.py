@@ -130,9 +130,15 @@ def industry_pair_rolling(reader: Reader, a: str, b: str, as_of: date) -> ReadRe
 def _industry_momentum(con: duckdb.DuckDBPyConnection, as_of: date) -> pd.DataFrame:
     has_rel = con.execute("""SELECT count(*) FROM duckdb_columns() WHERE table_name = 'group_returns_daily'
                              AND column_name = 'log_rel'""").fetchone()[0]
-    # v2: cumulative relative return versus the market, exp(sum(log_rel)) - 1; older cross builds: sum (v1)
-    agg = (lambda k: f"exp(sum(g.log_rel) FILTER (WHERE d.k <= {k})) - 1") if has_rel else \
-          (lambda k: f"sum(g.ew_cc) FILTER (WHERE d.k <= {k})")
+    # v2: cumulative relative return versus the market, exp(sum(log_rel)) - 1, with the rules of the group features:
+    # at least 80% of the window's sessions valid and no invalid return (<= -1) in it, else NULL. Older cross
+    # builds: sum of daily excess returns (v1).
+    def agg(k: int) -> str:
+        w = f"FILTER (WHERE d.k <= {k})"
+        if not has_rel:
+            return f"sum(g.ew_cc) {w}"
+        return (f"CASE WHEN count(g.log_rel) {w} >= {int(0.8 * k)} AND NOT coalesce(bool_or(g.rel_invalid) {w}, false) "
+                f"THEN exp(sum(g.log_rel) {w}) - 1 END")
     return con.execute(f"""
         WITH d AS (SELECT date, row_number() OVER (ORDER BY date DESC) AS k
                    FROM (SELECT DISTINCT date FROM group_returns_daily WHERE level = 'l2' AND date <= ?)),
@@ -142,7 +148,7 @@ def _industry_momentum(con: duckdb.DuckDBPyConnection, as_of: date) -> pd.DataFr
                any_value(g.n_members) FILTER (WHERE d.k = 1) AS members
         FROM group_returns_daily g JOIN d USING (date) JOIN n USING (group_code)
         WHERE g.level = 'l2' AND d.k <= 63 GROUP BY 1 HAVING count(g.ew_cc) FILTER (WHERE d.k <= 21) >= 17
-        ORDER BY ret_21d DESC""", [as_of]).df()
+        ORDER BY ret_21d DESC NULLS LAST""", [as_of]).df()
 
 
 def industry_momentum(reader: Reader, as_of: date) -> ReadResult:

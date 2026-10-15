@@ -133,3 +133,22 @@ Tests:
 - `finish_run` on a missing, finished or invalidated run; stuck-run listing.
 
 No research result is re-run: v2 was never used in a recorded result. Real data: no run is `running`.
+
+## PR #3 updated review fixes (2026-10-15, approved)
+
+Updated review of PR #3: two P2 findings and one P3, all confirmed and fixed. Full suite: 389 passed. Each new
+test was mutation-checked against the previous commit.
+
+| Finding | Fix |
+|---------|-----|
+| P2: Market watch v2 ignored `rel_invalid`, and only the 21-session window had a coverage check (on `ew_cc`) | Each 5, 21 and 63-session window applies the group-feature rules: at least 80% of its sessions with a valid `log_rel` and no invalid return, else NULL. Sorting puts NULLs last |
+| P2: `paper_date` had no lower bound (the real results store has one scanned pre-forward session, from `quant daily --date`), and readers took `max(run_date)`, so an older, no longer valid re-simulation could still show as current | `scan_date >= FORWARD_START` is added. A one-row table `paper_state` records the current paper date (NULL when there is none) on every `run_daily`. The Backtest page and the Exposure panel read it (falling back to `max(run_date)` for stores from before it). Older `run_date` rows stay as history |
+| P3: `invalidate()` left the run open, so a later error could overwrite `invalid` with `failed` | `invalidate()` closes the run, and `_fail_open_runs` only changes runs that are still `running` |
+
+Found while testing: `run_paper` crashed when the paper portfolio held no open position (an empty
+`executemany`). It now writes no position rows in that case; the new paper-state test covers it.
+
+Checks on real data:
+- The real stores do not have `paper_state` or `log_rel` yet: they appear at the next `quant daily` and
+  `quant cross build`.
+- Meanwhile the fallbacks work: Market watch, Backtest and Cross-stock render, with no database change.

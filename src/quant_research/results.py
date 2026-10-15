@@ -144,9 +144,9 @@ class ResultsStore:
         self.close()
 
     def _fail_open_runs(self, reason: str) -> None:
-        for run_id in sorted(self._open_runs):
-            self.con.execute("UPDATE research_runs SET status = 'failed', invalid_reason = ? WHERE run_id = ?",
-                             [reason, run_id])
+        for run_id in sorted(self._open_runs):                       # only runs still running: never overwrite
+            self.con.execute("""UPDATE research_runs SET status = 'failed', invalid_reason = ?
+                                WHERE run_id = ? AND status = 'running'""", [reason, run_id])
         self._open_runs.clear()
 
     def feature_build_id(self) -> str | None:
@@ -193,7 +193,10 @@ class ResultsStore:
     def invalidate(self, run_id: str, reason: str) -> int:
         cur = self.con.execute("UPDATE research_runs SET status = 'invalid', invalid_reason = ? WHERE run_id = ?",
                                [reason, run_id])
-        return cur.fetchone()[0]
+        changed = cur.fetchone()[0]
+        if changed:
+            self._open_runs.discard(run_id)                          # an invalid run is closed: never 'failed' later
+        return changed
 
     def q_values(self, run_id: str) -> dict[str, float]:
         return dict(self.con.execute("SELECT label, q_value FROM hypothesis_q WHERE run_id = ?", [run_id]).fetchall())

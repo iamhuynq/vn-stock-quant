@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS paper_daily (
     random_p95 DOUBLE, equal_weight DOUBLE, vnindex DOUBLE, n_positions INTEGER, PRIMARY KEY (run_date, date));
 -- Added 2026-10-09 (execution audit): the same strategy marked at last traded closes (information only).
 ALTER TABLE paper_daily ADD COLUMN IF NOT EXISTS equity_traded_mark DOUBLE;
+-- The run_date of the paper record that is current (NULL: no complete forward session yet).
+CREATE TABLE IF NOT EXISTS paper_state (id INTEGER PRIMARY KEY, paper_date DATE, updated_at TIMESTAMPTZ);
 CREATE TABLE IF NOT EXISTS paper_positions (
     run_date DATE NOT NULL, symbol VARCHAR NOT NULL, entry_date DATE, shares DOUBLE, entry_price DOUBLE,
     last_price DOUBLE, PRIMARY KEY (run_date, symbol));
@@ -150,9 +152,10 @@ def run_paper(store: ResultsStore, run_date: date, strategy: Strategy = FROZEN_S
                        equal_weight, vnindex, n_positions, equity_traded_mark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
         (run_date, d.item(), float(res.equity[i]), float(p05[i]), float(med[i]), float(p95[i]), float(ew[i]),
          float(vn[i]), int(res.n_positions[i]), float(traded[i])) for i, d in enumerate(m.dates)])
-    con.executemany("INSERT INTO paper_positions VALUES (?, ?, ?, ?, ?, ?)", [
-        (run_date, t.symbol, m.dates[t.entry_index].item(), t.shares, t.entry_price, t.exit_price)
-        for t in res.trades if t.exit_reason == "open_at_end"])
+    open_rows = [(run_date, t.symbol, m.dates[t.entry_index].item(), t.shares, t.entry_price, t.exit_price)
+                 for t in res.trades if t.exit_reason == "open_at_end"]
+    if open_rows:                                    # no open position (all cash) is valid: nothing to insert
+        con.executemany("INSERT INTO paper_positions VALUES (?, ?, ?, ?, ?, ?)", open_rows)
     return len(m.dates)
 
 
@@ -175,7 +178,10 @@ def run_daily(store: ResultsStore, now: datetime, rescan: date | None = None,
         gap AS (SELECT min(date) AS d FROM f
                 WHERE date NOT IN (SELECT scan_date FROM daily_scans WHERE status = 'scanned'))
         SELECT max(s.scan_date) FROM daily_scans s, gap
-        WHERE s.status = 'scanned' AND s.scan_date <= ? AND (gap.d IS NULL OR s.scan_date < gap.d)""",
-        [FORWARD_START, latest, latest]).fetchone()[0] if latest else None
+        WHERE s.status = 'scanned' AND s.scan_date >= ? AND s.scan_date <= ? AND (gap.d IS NULL OR s.scan_date < gap.d)""",
+        [FORWARD_START, latest, FORWARD_START, latest]).fetchone()[0] if latest else None
     sessions = run_paper(store, paper_date, rule=rule, n_random=n_random) if paper_date else 0
+    # The current paper record: readers use this date, never max(run_date), so an older re-simulation that is no
+    # longer valid (or none at all) is never shown as current. Earlier run_date rows stay as history.
+    store.con.execute("INSERT OR REPLACE INTO paper_state VALUES (1, ?, ?)", [paper_date, now])
     return DailyResult(latest, scanned, incomplete, sessions, paper_date)

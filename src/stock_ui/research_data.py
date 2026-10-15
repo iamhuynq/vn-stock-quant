@@ -141,7 +141,7 @@ def backtest_detail(reader: Reader, run_id: str) -> ReadResult:
 def _paper(con: duckdb.DuckDBPyConnection) -> dict | None:
     if not _has(con, "paper_daily"):
         return None
-    last = con.execute("SELECT max(run_date) FROM paper_daily").fetchone()[0]
+    last = current_paper_date(con)
     if last is None:
         return {"run_date": None}
     return {
@@ -195,3 +195,12 @@ def _interactions(con: duckdb.DuckDBPyConnection) -> dict | None:
 def interactions(reader: Reader) -> ReadResult:
     """Latest valid interaction scan: tests with BH q-values and the declared candidate rule; per-state ICs."""
     return reader.read("results", "interactions", _interactions)
+
+
+def current_paper_date(con: duckdb.DuckDBPyConnection):
+    """The paper record `quant daily` marked as current (paper_state); results stores from before that table:
+    the latest run_date."""
+    if _has(con, "paper_state"):
+        row = con.execute("SELECT paper_date FROM paper_state WHERE id = 1").fetchone()
+        return row[0] if row else None
+    return con.execute("SELECT max(run_date) FROM paper_daily").fetchone()[0]

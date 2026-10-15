@@ -123,3 +123,19 @@ def test_finish_run_requires_exactly_one_running_run(tmp_path):
         assert [r[0] for r in store.stuck_runs()] == ["r3"]
         status = dict(store.con.execute("SELECT run_id, status FROM research_runs").fetchall())
     assert status == {"r1": "ok", "r2": "invalid", "r3": "running"}
+
+
+def test_an_invalidated_open_run_stays_invalid_when_the_store_exits_on_an_error(tmp_path):
+    import pytest
+    wh, rs = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    build_synthetic_warehouse(wh)
+    build(wh, rs, NOW)
+    with pytest.raises(RuntimeError, match="later"):
+        with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+            store.start_run("r1", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+            store.start_run("r2", "pattern", "research", ResearchParams(), NOW, ("p", "v1"))
+            store.invalidate("r1", "test: definition bug")
+            raise RuntimeError("later")
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        rows = dict(store.con.execute("SELECT run_id, status || ':' || invalid_reason FROM research_runs").fetchall())
+    assert rows["r1"] == "invalid:test: definition bug" and rows["r2"].startswith("failed:RuntimeError")

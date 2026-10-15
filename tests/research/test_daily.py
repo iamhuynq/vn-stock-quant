@@ -186,3 +186,41 @@ def test_paper_portfolio_stops_before_an_incomplete_session_in_the_middle(tmp_pa
         last_day = store.con.execute("SELECT max(date) FROM paper_daily WHERE run_date = ?", [r.paper_date]).fetchone()[0]
     assert statuses[middle] == "incomplete" and statuses[FORWARD_DAYS[-1]] == "scanned"
     assert r.paper_date == FORWARD_DAYS[-4] and last_day == FORWARD_DAYS[-4]
+
+
+def test_paper_date_never_falls_before_the_forward_start_and_readers_follow_paper_state(tmp_path):
+    """A pre-forward session is scanned, and the first forward session becomes incomplete: there is no valid
+    paper record. paper_date is None, and readers do not show the older re-simulation as current."""
+    import duckdb as _duckdb
+    from stock_ui.exposure_data import paper_weights
+    from stock_ui.research_data import _paper
+    rs = make(tmp_path)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        first = run_daily(store, NOW, rule=RULE, n_random=2)                    # a valid record exists
+    assert first.paper_date == FORWARD_DAYS[-1]
+    pre = [d for d in calendar(START) if d < FORWARD_START][-1]
+    wh, rs2 = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    with Warehouse(wh) as w:                                                    # the first forward day breaks
+        w.connection.execute("DELETE FROM quotes_daily WHERE date = ? AND symbol = 'STK'", [FORWARD_DAYS[0]])
+    build(wh, rs2, NOW)
+    with ResultsStore(tmp_path / "results.duckdb", rs2) as store:
+        run_daily(store, NOW, rescan=pre, rule=RULE, n_random=2)                # a scanned pre-forward session
+        r = run_daily(store, NOW, rescan=FORWARD_DAYS[0], rule=RULE, n_random=2)
+        state = store.con.execute("SELECT paper_date FROM paper_state").fetchone()[0]
+        kept = store.con.execute("SELECT count(*) FROM paper_daily WHERE run_date = ?", [FORWARD_DAYS[-1]]).fetchone()[0]
+    assert r.paper_date is None and state is None and kept > 0                  # history kept, not current
+    con = _duckdb.connect(str(tmp_path / "results.duckdb"), read_only=True)
+    try:
+        assert _paper(con) == {"run_date": None}
+    finally:
+        con.close()
+
+    class _Reader:                                                              # minimal Reader for paper_weights
+        def read(self, _db, _key, fn):
+            c = _duckdb.connect(str(tmp_path / "results.duckdb"), read_only=True)
+            try:
+                from stock_ui.db import ReadResult
+                return ReadResult(fn(c), None, False, None)
+            finally:
+                c.close()
+    assert paper_weights(_Reader()).value == {}
