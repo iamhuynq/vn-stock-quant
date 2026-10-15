@@ -137,7 +137,9 @@ def run_paper(store: ResultsStore, run_date: date, strategy: Strategy = FROZEN_S
               rule: UniverseRule = UniverseRule(), n_random: int = N_RANDOM) -> int:
     """Re-simulate the frozen strategy over the forward window up to run_date; returns the number of sessions."""
     m = load_market(store.con, FORWARD_START, run_date, rule)
-    if len(m.dates) < 2:
+    if len(m.dates) < 2:                             # nothing to simulate: leave no rows behind for this run_date
+        store.con.execute("DELETE FROM paper_daily WHERE run_date = ?", [run_date])
+        store.con.execute("DELETE FROM paper_positions WHERE run_date = ?", [run_date])
         return len(m.dates)
     res = run(m, strategy, signal_selector, mark="legacy")        # pre-registered measurement
     rnd = np.array([run(m, strategy, random_selector(seed), mark="legacy").equity for seed in range(n_random)])
@@ -183,5 +185,6 @@ def run_daily(store: ResultsStore, now: datetime, rescan: date | None = None,
     sessions = run_paper(store, paper_date, rule=rule, n_random=n_random) if paper_date else 0
     # The current paper record: readers use this date, never max(run_date), so an older re-simulation that is no
     # longer valid (or none at all) is never shown as current. Earlier run_date rows stay as history.
-    store.con.execute("INSERT OR REPLACE INTO paper_state VALUES (1, ?, ?)", [paper_date, now])
+    # Only a record that was actually simulated (2+ forward sessions) becomes current; otherwise there is none.
+    store.con.execute("INSERT OR REPLACE INTO paper_state VALUES (1, ?, ?)", [paper_date if sessions >= 2 else None, now])
     return DailyResult(latest, scanned, incomplete, sessions, paper_date)

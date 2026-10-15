@@ -109,6 +109,11 @@ Registry). Summary:
   - `invalidate` closes the run;
   - fixed a crash of the all-cash paper portfolio.
 
+  Re-review fixes, fourth commit:
+  - the 80% rule is rounded up for new definitions (`min_valid`), while legacy definitions keep
+    rounding down;
+  - `paper_state` is NULL when no paper record was simulated.
+
 - Next from `project-review-vn-stock-quant-1.md` (agreed order 2026-10-08):
   1. Research Registry: done.
   2. Factor Engine: done (f1, 9 factors; no Value / Quality without fundamentals).

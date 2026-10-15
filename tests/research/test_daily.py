@@ -224,3 +224,24 @@ def test_paper_date_never_falls_before_the_forward_start_and_readers_follow_pape
             finally:
                 c.close()
     assert paper_weights(_Reader()).value == {}
+
+
+def test_one_forward_session_gives_no_current_paper_record(tmp_path):
+    """With a single complete forward session there is nothing to simulate: paper_state must be NULL and no
+    paper rows may remain for that run_date."""
+    rs = make(tmp_path)
+    with ResultsStore(tmp_path / "results.duckdb", rs) as store:
+        run_daily(store, NOW, rule=RULE, n_random=2)
+        store.con.execute("INSERT INTO paper_daily (run_date, date, equity) VALUES (?, ?, 1.0)",
+                          [FORWARD_DAYS[0], FORWARD_DAYS[0]])                # a stale row for that run_date
+        sessions = run_paper(store, FORWARD_DAYS[0], rule=RULE, n_random=2)
+        left = store.con.execute("SELECT count(*) FROM paper_daily WHERE run_date = ?", [FORWARD_DAYS[0]]).fetchone()[0]
+    assert sessions == 1 and left == 0
+    wh, rs2 = tmp_path / "w.duckdb", tmp_path / "r.duckdb"
+    with Warehouse(wh) as w:                                                  # only the first forward day complete
+        w.connection.execute("DELETE FROM quotes_daily WHERE date = ? AND symbol = 'STK'", [FORWARD_DAYS[1]])
+    build(wh, rs2, NOW)
+    with ResultsStore(tmp_path / "results2.duckdb", rs2) as store:
+        r = run_daily(store, NOW, rule=RULE, n_random=2)
+        state = store.con.execute("SELECT paper_date FROM paper_state").fetchone()[0]
+    assert r.paper_date == FORWARD_DAYS[0] and r.paper_sessions == 1 and state is None

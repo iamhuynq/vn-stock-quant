@@ -10,6 +10,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
+from quant_research.cross.groups import min_valid
 from stock_ui.db import Reader, ReadResult
 
 ROLLING = (20, 60, 120)
@@ -131,13 +132,13 @@ def _industry_momentum(con: duckdb.DuckDBPyConnection, as_of: date) -> pd.DataFr
     has_rel = con.execute("""SELECT count(*) FROM duckdb_columns() WHERE table_name = 'group_returns_daily'
                              AND column_name = 'log_rel'""").fetchone()[0]
     # v2: cumulative relative return versus the market, exp(sum(log_rel)) - 1, with the rules of the group features:
-    # at least 80% of the window's sessions valid and no invalid return (<= -1) in it, else NULL. Older cross
+    # at least 80% of the window's sessions valid (rounded up: min_valid) and no invalid return (<= -1) in it, else NULL. Older cross
     # builds: sum of daily excess returns (v1).
     def agg(k: int) -> str:
         w = f"FILTER (WHERE d.k <= {k})"
         if not has_rel:
             return f"sum(g.ew_cc) {w}"
-        return (f"CASE WHEN count(g.log_rel) {w} >= {int(0.8 * k)} AND NOT coalesce(bool_or(g.rel_invalid) {w}, false) "
+        return (f"CASE WHEN count(g.log_rel) {w} >= {min_valid(k)} AND NOT coalesce(bool_or(g.rel_invalid) {w}, false) "
                 f"THEN exp(sum(g.log_rel) {w}) - 1 END")
     return con.execute(f"""
         WITH d AS (SELECT date, row_number() OVER (ORDER BY date DESC) AS k

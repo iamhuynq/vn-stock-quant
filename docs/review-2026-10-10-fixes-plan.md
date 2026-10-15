@@ -152,3 +152,17 @@ Checks on real data:
 - The real stores do not have `paper_state` or `log_rel` yet: they appear at the next `quant daily` and
   `quant cross build`.
 - Meanwhile the fallbacks work: Market watch, Backtest and Cross-stock render, with no database change.
+
+## PR #3 re-review fixes (2026-10-15, approved)
+
+Full suite: 391 passed. Each new test was mutation-checked: it fails on the previous commit, or on the
+single changed threshold.
+
+| Finding | Fix |
+|---------|-----|
+| P2: Market watch v2 used `int(0.8 * k)` and accepted 16/21 (76%) and 50/63 (79%) | `min_valid(n)` = 80% rounded **up** in integer arithmetic (4/5, 17/21, 51/63). Boundary tests: 16/21 and 50/63 give NULL; 17/21 and 51/63 give a value |
+| Check: v2 group features used 16 of 21 | v2 (`grp_rel_21`, `own_rel_21`) uses `min_valid(21)` = 17. **v1 keeps 16, and so do the correlation snapshots**: recorded results (pattern G4, cross runs) depend on those definitions, so they are documented as legacy (rounded down) and not changed. Every new definition uses `min_valid` |
+| P3: `run_paper` with fewer than 2 sessions returned early and `paper_state` still named that date | `paper_state` records a date only when a paper record was actually simulated (2+ sessions), else NULL. The early return also clears rows left for that `run_date`. Test: a single complete forward session |
+
+Two 80% rules exist in the code: `int(0.8 * n)` in legacy definitions, and `>= 0.8 * n` (equivalent to
+rounding up) in `group_tests._past`. New code uses `min_valid`.

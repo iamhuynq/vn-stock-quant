@@ -17,6 +17,13 @@ LEVELS = {"l2": "industry_l2_code", "l3": "industry_l3_code"}
 MIN_MEMBERS = 5
 MOMENTUM_SESSIONS = 21          # 1 month, for the laggard features
 
+
+def min_valid(n: int) -> int:
+    """At least 80% of n sessions, rounded UP (17 of 21, 51 of 63), in integer arithmetic. Every new definition
+    uses it. Legacy definitions keep int(0.8 * n), rounded down (16 of 21): the v1 group features and the
+    correlation snapshots, because recorded results depend on them."""
+    return -(-4 * n // 5)
+
 GROUPS_SQL = """
 CREATE TABLE group_members_monthly AS
 WITH e AS (
@@ -60,13 +67,13 @@ FROM x;
 # sums of daily excess returns (stock return minus market return, summed).
 # Definition v2 (*_rel_21, for new tests only): cumulative relative return versus the market,
 # prod(1 + r) / prod(1 + r_market) - 1 = exp(sum(log_rel)) - 1 over the available sessions (missing sessions
-# skipped in both products, same minimum count); NULL if any return in the window is <= -1.
+# skipped in both products, at least min_valid(21) = 17 of 21); NULL if any return in the window is <= -1.
 GROUP_FEATURES_SQL = """
 CREATE TABLE group_features AS
 WITH g AS (
     SELECT date, group_code,
            CASE WHEN count(ew_cc) OVER w >= {min_obs} THEN sum(ew_cc) OVER w END AS grp_ret_21,
-           CASE WHEN count(log_rel) OVER w >= {min_obs} AND NOT coalesce(bool_or(rel_invalid) OVER w, false)
+           CASE WHEN count(log_rel) OVER w >= {min_obs_v2} AND NOT coalesce(bool_or(rel_invalid) OVER w, false)
                 THEN exp(sum(log_rel) OVER w) - 1 END AS grp_rel_21
     FROM group_returns_daily WHERE level = 'l2'
     WINDOW w AS (PARTITION BY group_code ORDER BY date ROWS BETWEEN {lookback_m1} PRECEDING AND CURRENT ROW)),
@@ -75,7 +82,7 @@ gt AS (SELECT *, ntile(3) OVER (PARTITION BY date ORDER BY grp_ret_21) AS grp_te
 s AS (
     SELECT d.symbol, d.date,
            CASE WHEN count(d.ex_cc) OVER w >= {min_obs} THEN sum(d.ex_cc) OVER w END AS own_ret_21,
-           CASE WHEN count(d.log_rel) OVER w >= {min_obs} AND NOT coalesce(bool_or(d.rel_invalid) OVER w, false)
+           CASE WHEN count(d.log_rel) OVER w >= {min_obs_v2} AND NOT coalesce(bool_or(d.rel_invalid) OVER w, false)
                 THEN exp(sum(d.log_rel) OVER w) - 1 END AS own_rel_21
     FROM (SELECT *, CASE WHEN raw_cc > -1 AND raw_cc - ex_cc > -1 THEN ln(1 + raw_cc) - ln(1 + raw_cc - ex_cc) END
                         AS log_rel,
@@ -98,7 +105,9 @@ def build_group_tables(con: duckdb.DuckDBPyConnection, params: CrossParams) -> d
     for sql in GROUPS_SQL.format(min_members=MIN_MEMBERS).split(";"):
         if sql.strip():
             con.execute(sql, [params.min_adv_value] if "rs.stock_features" in sql else [])
-    con.execute(GROUP_FEATURES_SQL.format(min_obs=int(0.8 * MOMENTUM_SESSIONS), lookback_m1=MOMENTUM_SESSIONS - 1))
+    con.execute(GROUP_FEATURES_SQL.format(min_obs=int(0.8 * MOMENTUM_SESSIONS),          # v1: legacy, rounded down
+                                          min_obs_v2=min_valid(MOMENTUM_SESSIONS),        # v2: rounded up
+                                          lookback_m1=MOMENTUM_SESSIONS - 1))
     rows = {t: con.execute(f"SELECT count(*) FROM {t}").fetchone()[0]
             for t in ("group_members_monthly", "group_returns_daily", "group_features")}
     corr, ll = [], []
